@@ -1,0 +1,118 @@
+[tool.poetry]
+name = "freshcart-fastapi"
+version = "1.0.0"
+description = "FreshCart E-Commerce Backend API - FastAPI Implementation"
+authors = ["FreshCart Team"]
+readme = "README.md"
+packages = [{include = "app"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.109.0"
+uvicorn = {extras = ["standard"], version = "^0.27.0"}
+pydantic = "^2.5.3"
+pydantic-settings = "^2.1.0"
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.25"}
+asyncpg = "^0.29.0"
+alembic = "^1.13.1"
+redis = {extras = ["hiredis"], version = "^5.0.1"}
+python-jose = {extras = ["cryptography"], version = "^3.3.0"}
+passlib = {extras = ["argon2"], version = "^1.7.4"}
+python-multipart = "^0.0.6"
+httpx = "^0.26.0"
+fastapi-mail = "^1.4.1"
+stripe = "^7.10.0"
+slowapi = "^0.1.9"
+loguru = "^0.7.2"
+aiofiles = "^23.2.1"
+python-dateutil = "^2.8.2"
+gunicorn = "^21.2.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.4"
+pytest-asyncio = "^0.23.3"
+pytest-cov = "^4.1.0"
+black = "^23.12.1"
+isort = "^5.13.2"
+mypy = "^1.8.0"
+ruff = "^0.1.11"
+pre-commit = "^3.6.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | alembic
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+skip = [".venv", "alembic"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --cov=app --cov-report=html --cov-report=term-missing"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "C",  # flake8-comprehensions
+    "B",  # flake8-bugbear
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+    "alembic",
+]

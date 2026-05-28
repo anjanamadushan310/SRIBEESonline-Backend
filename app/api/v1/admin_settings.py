@@ -1,0 +1,182 @@
+"""
+SRIBEESonline - Admin Settings API
+
+Super-Admin endpoints for managing application-wide settings such as
+the splash-screen animation video.
+
+  POST /splash-video   — upload a new splash video to S3 & save URL
+  GET  /splash-video   — retrieve current splash video details
+"""
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
+from loguru import logger
+
+from app.config.database import get_db
+from app.config.redis import get_redis, RedisKeys, RedisTTL
+from app.config.settings import settings
+from app.core.dependencies import require_roles
+from app.schemas.app_settings import SplashVideoResponse, SplashVideoUploadResponse
+from app.services.app_settings_service import AppSettingsService
+from app.services.storage_service import StorageService
+
+router = APIRouter()
+
+RequireSuperAdmin = Depends(require_roles("super_admin"))
+
+# Allowed video MIME types
+ALLOWED_VIDEO_TYPES = {
+    "video/mp4",
+    "video/quicktime",
+    "video/x-msvideo",
+    "video/webm",
+    "video/x-matroska",
+}
+
+# Redis key for the cached splash config
+SPLASH_CACHE_KEY = "app:splash_config"
+SPLASH_CACHE_TTL = 60 * 60  # 1 hour
+
+
+def _format_splash_response(setting) -> SplashVideoResponse:
+    """Format an AppSetting row into a SplashVideoResponse."""
+    return SplashVideoResponse(
+        setting_id=setting.setting_id,
+        key=setting.key,
+        video_url=setting.value,
+        description=setting.description,
+        is_active=setting.is_active,
+        updated_at=setting.updated_at,
+    )
+
+
+# ============================================================================
+# GET /splash-video
+# ============================================================================
+
+@router.get(
+    "/splash-video",
+    response_model=dict,
+    summary="Get current splash video details",
+    description="Returns the current splash-screen video configuration.",
+)
+async def get_splash_video(
+    db: AsyncSession = Depends(get_db),
+    admin=RequireSuperAdmin,
+):
+    setting = await AppSettingsService.get_splash_video(db)
+    if setting is None:
+        return {
+            "success": True,
+            "data": {
+                "key": "splash_video_url",
+                "video_url": None,
+                "is_active": False,
+                "description": "No splash video configured yet",
+                "updated_at": None,
+            },
+        }
+
+    return {
+        "success": True,
+        "data": _format_splash_response(setting).model_dump(mode="json"),
+    }
+
+
+# ============================================================================
+# POST /splash-video
+# ============================================================================
+
+@router.post(
+    "/splash-video",
+    response_model=dict,
+    summary="Upload a new splash video",
+    description=(
+        "Upload a video file (MP4, WebM, etc.) to S3 and save the URL "
+        "in the ``app_settings`` table as the splash-screen video."
+    ),
+)
+async def upload_splash_video(
+    file: UploadFile = File(..., description="Video file (MP4 recommended, max 50 MB)"),
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+    admin=RequireSuperAdmin,
+):
+    # Validate content type
+    if file.content_type not in ALLOWED_VIDEO_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "success": False,
+                "error": {
+                    "message": (
+                        f"Invalid file type '{file.content_type}'. "
+                        f"Allowed: {', '.join(sorted(ALLOWED_VIDEO_TYPES))}"
+                    ),
+                    "code": "INVALID_FILE_TYPE",
+                },
+            },
+        )
+
+    # Validate size (read into memory for small splash videos)
+    max_bytes = settings.s3_max_upload_size_mb * 1024 * 1024
+    contents = await file.read()
+    if len(contents) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "success": False,
+                "error": {
+                    "message": (
+                        f"File too large ({len(contents) / 1024 / 1024:.1f} MB). "
+                        f"Maximum allowed: {settings.s3_max_upload_size_mb} MB."
+                    ),
+                    "code": "FILE_TOO_LARGE",
+                },
+            },
+        )
+
+    # Reset file pointer and upload to S3
+    import io
+    fileobj = io.BytesIO(contents)
+
+    try:
+        url = StorageService.upload_fileobj(
+            fileobj=fileobj,
+            filename=file.filename or "splash_video.mp4",
+            folder="splash",
+            content_type=file.content_type,
+        )
+    except RuntimeError as exc:
+        logger.error(f"Splash video upload failed: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "success": False,
+                "error": {
+                    "message": "Failed to upload video to storage. Please try again.",
+                    "code": "STORAGE_UPLOAD_FAILED",
+                },
+            },
+        )
+
+    # Optionally delete the old video from S3
+    old_setting = await AppSettingsService.get_splash_video(db)
+    if old_setting and old_setting.value:
+        try:
+            StorageService.delete_by_url(old_setting.value)
+        except Exception:
+            logger.warning("Could not delete old splash video from S3 — continuing")
+
+    # Save URL in database
+    setting = await AppSettingsService.set_splash_video_url(db, url, is_active=True)
+
+    # Invalidate Redis cache
+    await redis.delete(SPLASH_CACHE_KEY)
+    logger.info(f"Splash video updated: {url}")
+
+    return {
+        "success": True,
+        "data": _format_splash_response(setting).model_dump(mode="json"),
+        "message": "Splash video uploaded successfully",
+    }

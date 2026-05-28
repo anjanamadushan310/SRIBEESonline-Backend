@@ -1,0 +1,373 @@
+"""
+FreshCart FastAPI Backend - User Model
+
+SQLAlchemy model for the users table.
+"""
+from datetime import datetime
+from typing import Optional
+from uuid import UUID, uuid4
+
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text, func
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.orm import relationship
+
+from app.config.database import Base
+
+
+class User(Base):
+    """
+    User model representing customer accounts.
+    
+    Maps to the 'users' table in PostgreSQL.
+    """
+    
+    __tablename__ = "users"
+    
+    # Primary key
+    user_id: UUID = Column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+        nullable=False,
+    )
+    
+    # Account info
+    email: str = Column(
+        String(255),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    password_hash: str = Column(
+        String(255),
+        nullable=False,
+    )
+    full_name: str = Column(
+        String(100),
+        nullable=False,
+    )
+    phone: Optional[str] = Column(
+        String(20),
+        nullable=True,
+    )
+    profile_picture_url: Optional[str] = Column(
+        Text,
+        nullable=True,
+    )
+    
+    # Verification status
+    is_verified: bool = Column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+    
+    # Two-factor authentication
+    two_factor_enabled: bool = Column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+    two_factor_secret: Optional[str] = Column(
+        String(255),
+        nullable=True,
+    )
+    
+    # Timestamps
+    created_at: datetime = Column(
+        DateTime,
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: datetime = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    last_login: Optional[datetime] = Column(
+        DateTime,
+        nullable=True,
+    )
+    
+    # User role for authorization
+    role: str = Column(
+        String(20),
+        default="customer",  # customer, admin, manager
+        nullable=False,
+    )
+    is_active: bool = Column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
+    first_name: Optional[str] = Column(
+        String(50),
+        nullable=True,
+    )
+    last_name: Optional[str] = Column(
+        String(50),
+        nullable=True,
+    )
+    
+    # Relationships
+    addresses = relationship("Address", back_populates="user", cascade="all, delete-orphan")
+    sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
+    orders = relationship("Order", back_populates="user")
+    reviews = relationship("Review", back_populates="user")
+    wishlist_items = relationship("WishlistItem", back_populates="user", cascade="all, delete-orphan")
+    notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
+    push_tokens = relationship("PushToken", back_populates="user", cascade="all, delete-orphan")
+    
+    def __repr__(self) -> str:
+        return f"<User(user_id={self.user_id}, email={self.email})>"
+    
+    def to_dict(self, include_sensitive: bool = False) -> dict:
+        """
+        Convert user to dictionary.
+        
+        Args:
+            include_sensitive: Include sensitive fields like password_hash
+            
+        Returns:
+            dict: User data
+        """
+        data = {
+            "userId": str(self.user_id),
+            "email": self.email,
+            "fullName": self.full_name,
+            "phone": self.phone,
+            "profilePictureUrl": self.profile_picture_url,
+            "isVerified": self.is_verified,
+            "twoFactorEnabled": self.two_factor_enabled,
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
+            "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
+            "lastLogin": self.last_login.isoformat() if self.last_login else None,
+        }
+        
+        if include_sensitive:
+            data["passwordHash"] = self.password_hash
+            data["twoFactorSecret"] = self.two_factor_secret
+            
+        return data
+
+
+class EmailVerification(Base):
+    """
+    Email verification token model.
+    
+    Maps to the 'email_verifications' table in PostgreSQL.
+    """
+    
+    __tablename__ = "email_verifications"
+    
+    verification_id: UUID = Column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+        nullable=False,
+    )
+    user_id: UUID = Column(
+        PG_UUID(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+    token: str = Column(
+        String(255),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    expires_at: datetime = Column(
+        DateTime,
+        nullable=False,
+    )
+    created_at: datetime = Column(
+        DateTime,
+        server_default=func.now(),
+        nullable=False,
+    )
+    
+    def __repr__(self) -> str:
+        return f"<EmailVerification(verification_id={self.verification_id}, user_id={self.user_id})>"
+
+
+class PasswordReset(Base):
+    """
+    Password reset token model.
+    
+    Maps to the 'password_resets' table in PostgreSQL.
+    """
+    
+    __tablename__ = "password_resets"
+    
+    reset_id: UUID = Column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+        nullable=False,
+    )
+    user_id: UUID = Column(
+        PG_UUID(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+    token: str = Column(
+        String(255),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    expires_at: datetime = Column(
+        DateTime,
+        nullable=False,
+    )
+    used: bool = Column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+    created_at: datetime = Column(
+        DateTime,
+        server_default=func.now(),
+        nullable=False,
+    )
+    
+    def __repr__(self) -> str:
+        return f"<PasswordReset(reset_id={self.reset_id}, user_id={self.user_id})>"
+
+
+class Session(Base):
+    """
+    User session model.
+    
+    Maps to the 'sessions' table in PostgreSQL.
+    Serves as fallback when Redis is unavailable.
+    """
+    
+    __tablename__ = "sessions"
+    
+    session_id: UUID = Column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+        nullable=False,
+    )
+    user_id: UUID = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.user_id"),
+        nullable=False,
+        index=True,
+    )
+    refresh_token_hash: str = Column(
+        String(255),
+        nullable=False,
+    )
+    ip_address: Optional[str] = Column(
+        String(45),  # Support IPv6
+        nullable=True,
+    )
+    user_agent: Optional[str] = Column(
+        Text,
+        nullable=True,
+    )
+    expires_at: datetime = Column(
+        DateTime,
+        nullable=False,
+    )
+    created_at: datetime = Column(
+        DateTime,
+        server_default=func.now(),
+        nullable=False,
+    )
+    
+    # Relationship
+    user = relationship("User", back_populates="sessions")
+    
+    def __repr__(self) -> str:
+        return f"<Session(session_id={self.session_id}, user_id={self.user_id})>"
+
+
+class Address(Base):
+    """
+    User address model.
+    
+    Maps to the 'addresses' table in PostgreSQL.
+    """
+    
+    __tablename__ = "addresses"
+    
+    address_id: UUID = Column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+        nullable=False,
+    )
+    user_id: UUID = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.user_id"),
+        nullable=False,
+        index=True,
+    )
+    address_line1: str = Column(
+        String(255),
+        nullable=False,
+    )
+    address_line2: Optional[str] = Column(
+        String(255),
+        nullable=True,
+    )
+    post_office: str = Column(
+        String(100),
+        nullable=False,
+    )
+    district: str = Column(
+        String(100),
+        nullable=False,
+    )
+    postal_code: str = Column(
+        String(20),
+        nullable=False,
+    )
+    province: str = Column(
+        String(100),
+        nullable=False,
+    )
+    is_default: bool = Column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+    created_at: datetime = Column(
+        DateTime,
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: datetime = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    
+    # Relationship
+    user = relationship("User", back_populates="addresses")
+    
+    def __repr__(self) -> str:
+        return f"<Address(address_id={self.address_id}, user_id={self.user_id})>"
+    
+    def to_dict(self) -> dict:
+        """Convert address to dictionary."""
+        return {
+            "addressId": str(self.address_id),
+            "userId": str(self.user_id),
+            "addressLine1": self.address_line1,
+            "addressLine2": self.address_line2,
+            "postOffice": self.post_office,
+            "district": self.district,
+            "postalCode": self.postal_code,
+            "province": self.province,
+            "isDefault": self.is_default,
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
+            "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
+        }

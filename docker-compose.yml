@@ -1,0 +1,270 @@
+# =============================================================================
+# SRIBEESonline — Docker Compose (Local Development)
+#
+# Services:
+#   postgres_db       PostgreSQL + pgvector (semantic search)
+#   redis_cache       Redis 7 (session / cart caching)
+#   s3-local          MinIO (S3-compatible object storage)
+#   minio_init        One-shot: creates the default bucket
+#   fastapi_backend   FastAPI application (hot-reload dev server)
+#   admin             React/Vite admin panel
+#
+# Run:   docker compose up -d
+# Stop:  docker compose down
+# Logs:  docker compose logs -f fastapi_backend
+# Tools: docker compose --profile tools up -d   (pgAdmin + Redis Commander)
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # PostgreSQL Database with pgvector
+  # ===========================================================================
+  postgres_db:
+    image: ankane/pgvector
+    container_name: sribees_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sribees_user
+      POSTGRES_PASSWORD: sribees_password_123
+      POSTGRES_DB: sribeesonline
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./docker/postgres/migrations:/docker-entrypoint-initdb.d/migrations:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sribees_user -d sribeesonline"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sribees_network
+
+  # ===========================================================================
+  # Redis Cache
+  # ===========================================================================
+  redis_cache:
+    image: redis:7-alpine
+    container_name: sribees_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass sribees_redis_password
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "sribees_redis_password", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sribees_network
+
+  # ===========================================================================
+  # MinIO — Local S3-compatible Object Storage
+  # ===========================================================================
+  # Console UI: http://localhost:9001  (admin / password123)
+  # S3 API:     http://localhost:9000
+  # ===========================================================================
+  s3-local:
+    image: minio/minio
+    container_name: sribees_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password123
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # MinIO Console UI
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || wget -qO- http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sribees_network
+
+  # ===========================================================================
+  # MinIO Bucket Init (creates the default bucket + sets public-read policy)
+  # ===========================================================================
+  minio_init:
+    image: minio/mc
+    container_name: sribees_minio_init
+    depends_on:
+      s3-local:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://s3-local:9000 admin password123;
+      mc mb --ignore-existing local/sribees-assets;
+      mc anonymous set download local/sribees-assets;
+      echo '=== Bucket sribees-assets ready with public-read policy ===';
+      "
+    networks:
+      - sribees_network
+
+  # ===========================================================================
+  # FastAPI Backend
+  # ===========================================================================
+  fastapi_backend:
+    build:
+      context: ./fastapi_backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: sribees_backend
+    restart: unless-stopped
+    environment:
+      # ── Application ──
+      APP_NAME: SRIBEESonline API
+      APP_ENV: development
+      DEBUG: "true"
+      HOST: 0.0.0.0
+      PORT: 8000
+
+      # ── Database ──
+      DATABASE_URL: postgresql+asyncpg://sribees_user:sribees_password_123@postgres_db:5432/sribeesonline
+      DATABASE_HOST: postgres_db
+      DATABASE_PORT: 5432
+      DATABASE_NAME: sribeesonline
+      DATABASE_USER: sribees_user
+      DATABASE_PASSWORD: sribees_password_123
+
+      # ── Redis ──
+      REDIS_URL: redis://:sribees_redis_password@redis_cache:6379/0
+      REDIS_HOST: redis_cache
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: sribees_redis_password
+
+      # ── JWT ──
+      JWT_SECRET_KEY: local-dev-secret-key-change-in-production-123456
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 60
+      JWT_REFRESH_TOKEN_EXPIRE_DAYS: 7
+
+      # ── Gemini AI (Semantic Search) ──
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_EMBEDDING_MODEL: text-embedding-004
+      GEMINI_EMBEDDING_DIMENSION: 768
+      SEMANTIC_SEARCH_SIMILARITY_THRESHOLD: 0.35
+
+      # ── AWS S3 / MinIO Storage ──
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password123
+      AWS_REGION: us-east-1
+      S3_BUCKET_NAME: sribees-assets
+      S3_ENDPOINT_URL: http://s3-local:9000
+      S3_PUBLIC_URL_PREFIX: http://localhost:9000/sribees-assets
+      S3_EMULATOR_URL_PREFIX: http://10.0.2.2:9000/sribees-assets
+
+      # ── CORS — Allow frontend and Flutter ──
+      CORS_ORIGINS: '["http://localhost:3000","http://localhost:5173","http://127.0.0.1:3000","http://10.0.2.2:8000"]'
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./fastapi_backend:/app
+      - backend_logs:/app/logs
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      redis_cache:
+        condition: service_healthy
+      minio_init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - sribees_network
+
+  # ===========================================================================
+  # Admin Frontend (React/Vite)
+  # ===========================================================================
+  admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+    container_name: sribees_admin
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: http://localhost:8000
+      VITE_APP_NAME: SRIBEESonline Admin
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./admin/src:/app/src
+      - ./admin/public:/app/public
+    depends_on:
+      - fastapi_backend
+    networks:
+      - sribees_network
+
+  # ===========================================================================
+  # pgAdmin (Optional — Database Management UI)
+  # ===========================================================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: sribees_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@sribeesonline.lk
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres_db
+    networks:
+      - sribees_network
+    profiles:
+      - tools
+
+  # ===========================================================================
+  # Redis Commander (Optional — Redis Management UI)
+  # ===========================================================================
+  redis_commander:
+    image: rediscommander/redis-commander:latest
+    container_name: sribees_redis_commander
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: local:redis_cache:6379:0:sribees_redis_password
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis_cache
+    networks:
+      - sribees_network
+    profiles:
+      - tools
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  sribees_network:
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local
+  backend_logs:
+    driver: local
+  pgadmin_data:
+    driver: local

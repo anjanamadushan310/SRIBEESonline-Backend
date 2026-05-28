@@ -1,0 +1,164 @@
+"""
+SRIBEESonline - Branch & Post Office Mapping Models
+
+SQLAlchemy models for branch management and address-to-branch routing.
+"""
+from datetime import datetime
+from typing import Optional
+from uuid import UUID, uuid4
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.config.database import Base
+
+
+class Branch(Base):
+    """
+    Branch model representing a store branch location.
+
+    Each branch serves a geographic area and has its own inventory,
+    staff, and marketing configuration.
+    """
+
+    __tablename__ = "branches"
+
+    branch_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    post_office: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    district: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    province: Mapped[str] = mapped_column(String(100), nullable=False)
+    phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    manager_id: Mapped[Optional[UUID]] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("admins.admin_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    # Relationships
+    manager = relationship("Admin", foreign_keys=[manager_id], backref="managed_branch")
+    post_office_mappings = relationship(
+        "PostOfficeBranchMapping",
+        back_populates="branch",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:
+        return f"<Branch {self.code}: {self.name}>"
+
+    def to_dict(self) -> dict:
+        """Convert branch to dictionary."""
+        return {
+            "branchId": str(self.branch_id),
+            "name": self.name,
+            "code": self.code,
+            "address": self.address,
+            "postOffice": self.post_office,
+            "district": self.district,
+            "province": self.province,
+            "phone": self.phone,
+            "managerId": str(self.manager_id) if self.manager_id else None,
+            "isActive": self.is_active,
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
+            "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class PostOfficeBranchMapping(Base):
+    """
+    Maps Post Office names to serving branches.
+
+    Used for address-based branch routing: when a customer selects
+    a delivery address, the post_office field is looked up in this table
+    to resolve which branch_id serves that area.
+    """
+
+    __tablename__ = "post_office_branch_mapping"
+
+    mapping_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    post_office: Mapped[str] = mapped_column(
+        String(100),
+        unique=True,
+        nullable=False,
+        index=True,
+        comment="Post office name — must match addresses.post_office values",
+    )
+    branch_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("branches.branch_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    branch_name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        comment="Denormalized branch name for fast reads",
+    )
+    district: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    province: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    # Relationships
+    branch = relationship("Branch", back_populates="post_office_mappings")
+
+    # B-tree indexes for fast hierarchical filtering (province → district → post_office)
+    __table_args__ = (
+        Index("idx_po_branch_mapping_province", "province"),
+        Index("idx_po_branch_mapping_district", "district"),
+        Index("idx_po_branch_mapping_active", "is_active"),
+        Index(
+            "idx_po_branch_mapping_location_triplet",
+            "province", "district", "post_office",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PostOfficeBranchMapping {self.post_office} → {self.branch_name}>"
+
+    def to_dict(self) -> dict:
+        """Convert mapping to dictionary."""
+        return {
+            "mappingId": str(self.mapping_id),
+            "postOffice": self.post_office,
+            "branchId": str(self.branch_id),
+            "branchName": self.branch_name,
+            "district": self.district,
+            "province": self.province,
+            "isActive": self.is_active,
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
+            "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
+        }

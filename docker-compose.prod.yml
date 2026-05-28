@@ -1,0 +1,64 @@
+# =============================================================================
+# SRIBEESonline — Production Docker Compose Override
+#
+# Usage (production):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# This override:
+#   - Builds the "production" Dockerfile target (gunicorn, no hot-reload)
+#   - Removes the source-code volume mount (uses baked-in code)
+#   - Removes MinIO (production uses real AWS S3)
+#   - Overrides environment variables for production secrets
+# =============================================================================
+
+version: '3.8'
+
+services:
+  fastapi_backend:
+    build:
+      target: production
+    volumes:
+      - backend_logs:/app/logs
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+
+      # Override with production values (injected via CI or .env.prod)
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+
+      # AWS S3 (real — no MinIO endpoint)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-sribeesonline-assets}
+      S3_ENDPOINT_URL: ""
+      S3_PUBLIC_URL_PREFIX: ""
+      S3_EMULATOR_URL_PREFIX: ""
+
+      # Gemini AI
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+
+    restart: always
+
+  # Disable local-only services in production
+  s3-local:
+    profiles:
+      - disabled
+
+  minio_init:
+    profiles:
+      - disabled
+
+  admin:
+    profiles:
+      - disabled
+
+  pgadmin:
+    profiles:
+      - disabled
+
+  redis_commander:
+    profiles:
+      - disabled

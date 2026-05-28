@@ -1,0 +1,341 @@
+"""
+SRIBEESonline - Firebase Cloud Messaging Service
+
+Push notification service using Firebase Admin SDK.
+Replaces Expo Push Notifications for Flutter mobile app.
+"""
+import json
+from typing import Optional, List, Dict, Any
+from uuid import UUID
+from pathlib import Path
+
+from loguru import logger
+
+from app.config.settings import settings
+
+# Firebase Admin SDK (optional import - install with: pip install firebase-admin)
+try:
+    import firebase_admin
+    from firebase_admin import credentials, messaging
+    FIREBASE_AVAILABLE = True
+except ImportError:
+    FIREBASE_AVAILABLE = False
+    logger.warning("firebase-admin not installed. FCM push notifications disabled.")
+
+
+class FCMService:
+    """Firebase Cloud Messaging service for push notifications."""
+    
+    _initialized = False
+    
+    @classmethod
+    def initialize(cls) -> bool:
+        """
+        Initialize Firebase Admin SDK.
+        
+        Requires FIREBASE_CREDENTIALS_PATH environment variable pointing to
+        the service account JSON file.
+        """
+        if cls._initialized:
+            return True
+        
+        if not FIREBASE_AVAILABLE:
+            logger.warning("Firebase Admin SDK not available")
+            return False
+        
+        cred_path = getattr(settings, 'firebase_credentials_path', None)
+        
+        if not cred_path:
+            logger.warning("FIREBASE_CREDENTIALS_PATH not configured")
+            return False
+        
+        cred_file = Path(cred_path)
+        if not cred_file.exists():
+            logger.error(f"Firebase credentials file not found: {cred_path}")
+            return False
+        
+        try:
+            cred = credentials.Certificate(str(cred_file))
+            firebase_admin.initialize_app(cred)
+            cls._initialized = True
+            logger.info("Firebase Admin SDK initialized")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize Firebase: {e}")
+            return False
+    
+    @classmethod
+    async def send_to_token(
+        cls,
+        token: str,
+        title: str,
+        body: str,
+        data: Optional[Dict[str, str]] = None,
+        image_url: Optional[str] = None,
+    ) -> bool:
+        """
+        Send push notification to a single device token.
+        
+        Args:
+            token: FCM device token
+            title: Notification title
+            body: Notification body text
+            data: Optional data payload (must be string key-value pairs)
+            image_url: Optional image URL for rich notification
+        
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        if not cls._initialized:
+            if not cls.initialize():
+                return False
+        
+        try:
+            # Build notification
+            notification = messaging.Notification(
+                title=title,
+                body=body,
+                image=image_url,
+            )
+            
+            # Build Android-specific config
+            android_config = messaging.AndroidConfig(
+                priority="high",
+                notification=messaging.AndroidNotification(
+                    sound="default",
+                    click_action="FLUTTER_NOTIFICATION_CLICK",
+                    channel_id="sribeesonline_notifications",
+                ),
+            )
+            
+            # Build iOS-specific config
+            apns_config = messaging.APNSConfig(
+                payload=messaging.APNSPayload(
+                    aps=messaging.Aps(
+                        sound="default",
+                        badge=1,
+                    ),
+                ),
+            )
+            
+            # Build message
+            message = messaging.Message(
+                notification=notification,
+                data=data or {},
+                android=android_config,
+                apns=apns_config,
+                token=token,
+            )
+            
+            # Send message
+            response = messaging.send(message)
+            logger.info(f"FCM message sent: {response}")
+            return True
+            
+        except messaging.UnregisteredError:
+            logger.warning(f"FCM token unregistered: {token[:20]}...")
+            return False
+        except Exception as e:
+            logger.error(f"FCM send failed: {e}")
+            return False
+    
+    @classmethod
+    async def send_to_tokens(
+        cls,
+        tokens: List[str],
+        title: str,
+        body: str,
+        data: Optional[Dict[str, str]] = None,
+        image_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Send push notification to multiple device tokens.
+        
+        Args:
+            tokens: List of FCM device tokens
+            title: Notification title
+            body: Notification body text
+            data: Optional data payload
+            image_url: Optional image URL
+        
+        Returns:
+            Dict with success_count, failure_count, and failed_tokens
+        """
+        if not tokens:
+            return {"success_count": 0, "failure_count": 0, "failed_tokens": []}
+        
+        if not cls._initialized:
+            if not cls.initialize():
+                return {"success_count": 0, "failure_count": len(tokens), "failed_tokens": tokens}
+        
+        try:
+            # Build notification
+            notification = messaging.Notification(
+                title=title,
+                body=body,
+                image=image_url,
+            )
+            
+            # Build multicast message
+            message = messaging.MulticastMessage(
+                notification=notification,
+                data=data or {},
+                tokens=tokens,
+            )
+            
+            # Send multicast
+            response = messaging.send_each_for_multicast(message)
+            
+            # Collect failed tokens
+            failed_tokens = []
+            for idx, send_response in enumerate(response.responses):
+                if not send_response.success:
+                    failed_tokens.append(tokens[idx])
+            
+            logger.info(
+                f"FCM multicast: {response.success_count} success, "
+                f"{response.failure_count} failures"
+            )
+            
+            return {
+                "success_count": response.success_count,
+                "failure_count": response.failure_count,
+                "failed_tokens": failed_tokens,
+            }
+            
+        except Exception as e:
+            logger.error(f"FCM multicast failed: {e}")
+            return {
+                "success_count": 0,
+                "failure_count": len(tokens),
+                "failed_tokens": tokens,
+            }
+    
+    @classmethod
+    async def send_to_topic(
+        cls,
+        topic: str,
+        title: str,
+        body: str,
+        data: Optional[Dict[str, str]] = None,
+    ) -> bool:
+        """
+        Send push notification to a topic (broadcast).
+        
+        Topics: 'all', 'promotions', 'order_updates', etc.
+        """
+        if not cls._initialized:
+            if not cls.initialize():
+                return False
+        
+        try:
+            message = messaging.Message(
+                notification=messaging.Notification(title=title, body=body),
+                data=data or {},
+                topic=topic,
+            )
+            
+            response = messaging.send(message)
+            logger.info(f"FCM topic message sent to '{topic}': {response}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"FCM topic send failed: {e}")
+            return False
+    
+    @classmethod
+    async def subscribe_to_topic(cls, tokens: List[str], topic: str) -> bool:
+        """Subscribe tokens to a topic."""
+        if not cls._initialized:
+            if not cls.initialize():
+                return False
+        
+        try:
+            response = messaging.subscribe_to_topic(tokens, topic)
+            logger.info(f"Subscribed {response.success_count} tokens to '{topic}'")
+            return True
+        except Exception as e:
+            logger.error(f"Topic subscription failed: {e}")
+            return False
+    
+    @classmethod
+    async def unsubscribe_from_topic(cls, tokens: List[str], topic: str) -> bool:
+        """Unsubscribe tokens from a topic."""
+        if not cls._initialized:
+            if not cls.initialize():
+                return False
+        
+        try:
+            response = messaging.unsubscribe_from_topic(tokens, topic)
+            logger.info(f"Unsubscribed {response.success_count} tokens from '{topic}'")
+            return True
+        except Exception as e:
+            logger.error(f"Topic unsubscription failed: {e}")
+            return False
+
+
+# ============================================================================
+# Notification Templates
+# ============================================================================
+
+class NotificationTemplates:
+    """Pre-defined notification templates for common events."""
+    
+    @staticmethod
+    def order_confirmed(order_id: str, total: float) -> Dict[str, str]:
+        return {
+            "title": "Order Confirmed! ✅",
+            "body": f"Your order #{order_id[:8]} for LKR {total:,.2f} has been confirmed.",
+            "data": {"type": "order", "order_id": order_id, "action": "view_order"},
+        }
+    
+    @staticmethod
+    def order_shipped(order_id: str, tracking_number: Optional[str] = None) -> Dict[str, str]:
+        body = f"Your order #{order_id[:8]} is on its way!"
+        if tracking_number:
+            body += f" Tracking: {tracking_number}"
+        return {
+            "title": "Order Shipped! 📦",
+            "body": body,
+            "data": {"type": "order", "order_id": order_id, "action": "track_order"},
+        }
+    
+    @staticmethod
+    def order_delivered(order_id: str) -> Dict[str, str]:
+        return {
+            "title": "Order Delivered! 🎉",
+            "body": f"Your order #{order_id[:8]} has been delivered. Enjoy!",
+            "data": {"type": "order", "order_id": order_id, "action": "rate_order"},
+        }
+    
+    @staticmethod
+    def price_drop(product_name: str, old_price: float, new_price: float, product_id: str) -> Dict[str, str]:
+        discount = ((old_price - new_price) / old_price) * 100
+        return {
+            "title": "Price Drop Alert! 💰",
+            "body": f"{product_name} is now {discount:.0f}% off! LKR {new_price:,.2f}",
+            "data": {"type": "product", "product_id": product_id, "action": "view_product"},
+        }
+    
+    @staticmethod
+    def back_in_stock(product_name: str, product_id: str) -> Dict[str, str]:
+        return {
+            "title": "Back in Stock! 🔔",
+            "body": f"{product_name} is available again. Get it before it's gone!",
+            "data": {"type": "product", "product_id": product_id, "action": "view_product"},
+        }
+    
+    @staticmethod
+    def cart_reminder(item_count: int) -> Dict[str, str]:
+        return {
+            "title": "Forgot Something? 🛒",
+            "body": f"You have {item_count} item{'s' if item_count > 1 else ''} waiting in your cart!",
+            "data": {"type": "cart", "action": "view_cart"},
+        }
+    
+    @staticmethod
+    def promotional(title: str, body: str, promo_code: Optional[str] = None) -> Dict[str, str]:
+        data = {"type": "promotion", "action": "view_promotions"}
+        if promo_code:
+            data["promo_code"] = promo_code
+        return {"title": title, "body": body, "data": data}

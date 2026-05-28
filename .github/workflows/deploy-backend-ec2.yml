@@ -1,0 +1,115 @@
+# =============================================================================
+# SRIBEESonline — AWS EC2 Backend CI/CD Pipeline
+#
+# Triggers on push to master when modifications are made to fastapi_backend/
+#
+# Required GitHub Secrets:
+#   EC2_HOST          — EC2 Public IP address or domain name
+#   EC2_USERNAME      — SSH username (e.g. ubuntu, ec2-user)
+#   EC2_SSH_KEY       — SSH Private Key (PEM format)
+#   ENV_CONTENT       — Full consolidated .env file content
+# =============================================================================
+
+name: Deploy Backend to AWS EC2
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'fastapi_backend/**'
+      - 'docker/**'
+      - 'docker-compose.yml'
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up SSH Key & Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            echo "==== Starting Deployment to AWS EC2 ===="
+            
+            # Navigate to project directory (change this to your actual project path on EC2)
+            PROJECT_DIR="/home/${{ secrets.EC2_USERNAME }}/SRIBEESonline"
+            mkdir -p $PROJECT_DIR
+            cd $PROJECT_DIR
+
+            # Clone repository if it doesn't exist, otherwise pull latest
+            if [ ! -d ".git" ]; then
+              echo "Cloning repository..."
+              git clone https://github.com/${{ github.repository }}.git .
+            else
+              echo "Pulling latest changes..."
+              git checkout master
+              git pull origin master
+            fi
+
+            # -----------------------------------------------------------------
+            # 1. Write Consolidated ENV_CONTENT directly to .env
+            # -----------------------------------------------------------------
+            echo "Writing environment configuration..."
+            echo "${{ secrets.ENV_CONTENT }}" > fastapi_backend/.env
+            
+            # Ensure it is secure
+            chmod 600 fastapi_backend/.env
+
+            # -----------------------------------------------------------------
+            # 2. Rebuild & Run Docker Services
+            # -----------------------------------------------------------------
+            echo "Stopping existing docker containers..."
+            docker compose down --remove-orphans || true
+
+            echo "Building and launching containers..."
+            docker compose up -d --build postgres_db redis_cache s3-local fastapi_backend
+
+            # Verify services are running
+            echo "Verifying running containers..."
+            docker compose ps
+
+            # -----------------------------------------------------------------
+            # 3. Database Migrations (SQL and Alembic)
+            # -----------------------------------------------------------------
+            echo "Running Alembic migrations..."
+            docker compose exec -T fastapi_backend alembic upgrade head || echo "No alembic setup found, proceeding..."
+
+            # -----------------------------------------------------------------
+            # 4. Automated Certbot SSL Certificates Setup / Renewal
+            # -----------------------------------------------------------------
+            echo "Checking SSL Certificates (Certbot)..."
+            
+            # Domain must match your EC2 public domain
+            DOMAIN=$(grep "BACKEND_DOMAIN" fastapi_backend/.env | cut -d '=' -f2 || echo "api.sribeesonline.lk")
+            EMAIL=$(grep "SSL_EMAIL" fastapi_backend/.env | cut -d '=' -f2 || echo "admin@sribeesonline.lk")
+
+            if [ -x "$(command -v certbot)" ]; then
+              echo "Certbot is installed. Checking for SSL certificate..."
+              if [ ! -d "/etc/letsencrypt/live/$DOMAIN" ]; then
+                echo "Requesting new SSL certificate for $DOMAIN..."
+                sudo systemctl stop nginx || true
+                sudo certbot certonly --standalone -d $DOMAIN --non-interactive --agree-tos -m $EMAIL
+                sudo systemctl start nginx || true
+              else
+                echo "SSL Certificate already exists. Checking renewal status..."
+                sudo certbot renew --post-hook "sudo systemctl reload nginx"
+              fi
+            else
+              echo "Certbot not found on the host machine. Please ensure Certbot is installed on the EC2 host."
+            fi
+
+            # Reload nginx to ensure SSL is loaded
+            if [ -x "$(command -v systemctl)" ] && [ -x "$(command -v nginx)" ]; then
+              echo "Reloading Nginx web server..."
+              sudo systemctl reload nginx
+            fi
+
+            echo "==== Deployment Completed Successfully! ===="

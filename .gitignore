@@ -1,0 +1,37 @@
+# Environment files (contain real credentials)
+.env
+.env.production
+.env.staging
+.env.docker
+!.env.example
+
+# Python virtual environments
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Node modules
+node_modules/
+.next/
+dist/
+
+# Uploads and logs
+uploads/
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

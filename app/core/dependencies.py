@@ -1,0 +1,314 @@
+"""
+FreshCart FastAPI Backend - Common Dependencies
+
+Reusable FastAPI dependencies for authentication, database, and utilities.
+"""
+from typing import Annotated, Optional
+from uuid import UUID
+
+from fastapi import Depends, Header, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from redis.asyncio import Redis
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config.database import get_db
+from app.config.redis import get_redis
+from app.core.exceptions import (
+    AuthenticationError,
+    InvalidTokenError,
+    TokenExpiredError,
+    UnverifiedEmailError,
+    InsufficientPermissionsError,
+)
+from app.core.security import verify_token
+
+# Security scheme for JWT Bearer authentication
+security = HTTPBearer(auto_error=False)
+
+
+# ============================================================================
+# Authentication Dependencies
+# ============================================================================
+
+async def get_current_user(
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(security)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """
+    Get the currently authenticated user from JWT token.
+    
+    Args:
+        credentials: Bearer token from Authorization header
+        db: Database session
+        
+    Returns:
+        dict: User data from database
+        
+    Raises:
+        AuthenticationError: If no token provided
+        InvalidTokenError: If token is invalid
+        TokenExpiredError: If token has expired
+    """
+    if credentials is None:
+        raise AuthenticationError(message="Authentication required")
+    
+    token = credentials.credentials
+    payload = verify_token(token, token_type="access")
+    
+    if payload is None:
+        raise InvalidTokenError()
+    
+    user_id = payload.get("sub")
+    if not user_id:
+        raise InvalidTokenError()
+    
+    # Import here to avoid circular imports
+    from app.models.user import User
+    
+    result = await db.execute(
+        select(User).where(User.user_id == UUID(user_id))
+    )
+    user = result.scalar_one_or_none()
+    
+    if user is None:
+        raise InvalidTokenError(message="User not found")
+    
+    if not user.is_verified:
+        raise UnverifiedEmailError()
+    
+    return user
+
+
+async def get_current_user_optional(
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(security)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Optional[dict]:
+    """
+    Get the currently authenticated user if token provided, otherwise None.
+    
+    Useful for endpoints that work for both authenticated and anonymous users.
+    
+    Args:
+        credentials: Bearer token from Authorization header (optional)
+        db: Database session
+        
+    Returns:
+        User data if authenticated, None otherwise
+    """
+    if credentials is None:
+        return None
+    
+    try:
+        return await get_current_user(credentials, db)
+    except (AuthenticationError, InvalidTokenError, TokenExpiredError):
+        return None
+
+
+async def get_current_admin(
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(security)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """
+    Get the currently authenticated admin user.
+    
+    Args:
+        credentials: Bearer token from Authorization header
+        db: Database session
+        
+    Returns:
+        dict: Admin user data
+        
+    Raises:
+        AuthenticationError: If no token or not an admin
+    """
+    if credentials is None:
+        raise AuthenticationError(message="Admin authentication required")
+    
+    token = credentials.credentials
+    payload = verify_token(token, token_type="access")
+    
+    if payload is None:
+        raise InvalidTokenError()
+    
+    admin_id = payload.get("sub")
+    if not admin_id:
+        raise InvalidTokenError()
+    
+    # Check if it's an admin token
+    is_admin = payload.get("is_admin", False)
+    if not is_admin:
+        raise AuthenticationError(message="Admin access required")
+    
+    # Import here to avoid circular imports
+    from app.models.admin import Admin
+    
+    result = await db.execute(
+        select(Admin).where(Admin.admin_id == UUID(admin_id))
+    )
+    admin = result.scalar_one_or_none()
+    
+    if admin is None:
+        raise InvalidTokenError(message="Admin not found")
+    
+    if not admin.is_active:
+        raise AuthenticationError(message="Admin account is deactivated")
+    
+    return admin
+
+
+async def require_super_admin(
+    admin = Depends(get_current_admin),
+) -> dict:
+    """
+    Require the current user to be a Super Admin.
+    """
+    from app.models.admin import AdminRole
+    
+    if admin.role != AdminRole.SUPER_ADMIN:
+        raise InsufficientPermissionsError(message="Super Admin access required")
+    
+    return admin
+
+
+# ============================================================================
+# RBAC Dependencies
+# ============================================================================
+
+def require_roles(*allowed_roles: str):
+    """
+    Factory function to create a role-checking dependency.
+    
+    Args:
+        *allowed_roles: Role names that are allowed access
+        
+    Returns:
+        Dependency function that validates admin role
+        
+    Usage:
+        @router.get("/admin-only")
+        async def admin_endpoint(
+            admin: AdminUser = Depends(require_roles("super_admin", "branch_manager"))
+        ):
+            ...
+    """
+    async def role_checker(
+        admin: Annotated[dict, Depends(get_current_admin)],
+    ) -> dict:
+        if admin.role not in allowed_roles:
+            raise InsufficientPermissionsError(
+                required_roles=list(allowed_roles),
+                message=f"This action requires one of these roles: {', '.join(allowed_roles)}",
+            )
+        return admin
+    
+    return role_checker
+
+
+# Pre-defined role dependencies
+RequireSuperAdmin = Depends(require_roles("super_admin"))
+RequireBranchManager = Depends(require_roles("super_admin", "branch_manager"))
+RequireMarketingManager = Depends(require_roles("super_admin", "branch_manager", "marketing_manager"))
+RequireStaff = Depends(require_roles("super_admin", "branch_manager", "staff"))
+RequireSupport = Depends(require_roles("super_admin", "support"))
+RequireInventory = Depends(require_roles("super_admin", "branch_manager", "inventory_manager"))
+
+
+# ============================================================================
+# Pagination Dependencies
+# ============================================================================
+
+class PaginationParams:
+    """Pagination parameters dependency."""
+    
+    def __init__(
+        self,
+        page: int = 1,
+        limit: int = 20,
+        sort_by: Optional[str] = None,
+        sort_order: str = "desc",
+    ):
+        self.page = max(1, page)
+        self.limit = min(100, max(1, limit))  # Max 100 items per page
+        self.offset = (self.page - 1) * self.limit
+        self.sort_by = sort_by
+        self.sort_order = sort_order.lower() if sort_order in ["asc", "desc"] else "desc"
+
+
+def get_pagination(
+    page: int = 1,
+    limit: int = 20,
+    sort_by: Optional[str] = None,
+    sort_order: str = "desc",
+) -> PaginationParams:
+    """
+    Get pagination parameters from query string.
+    
+    Args:
+        page: Page number (1-indexed)
+        limit: Items per page (max 100)
+        sort_by: Field to sort by
+        sort_order: Sort direction (asc/desc)
+        
+    Returns:
+        PaginationParams: Validated pagination parameters
+    """
+    return PaginationParams(page, limit, sort_by, sort_order)
+
+
+# ============================================================================
+# Request Context Dependencies
+# ============================================================================
+
+def get_client_ip(request: Request) -> str:
+    """
+    Get client IP address from request.
+    
+    Handles X-Forwarded-For header for proxied requests.
+    
+    Args:
+        request: FastAPI request object
+        
+    Returns:
+        str: Client IP address
+    """
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def get_user_agent(
+    user_agent: Annotated[Optional[str], Header(alias="User-Agent")] = None,
+) -> Optional[str]:
+    """
+    Get User-Agent header from request.
+    
+    Args:
+        user_agent: User-Agent header value
+        
+    Returns:
+        str: User agent string or None
+    """
+    return user_agent
+
+
+# ============================================================================
+# Type Aliases for Dependencies
+# ============================================================================
+
+# Database session dependency
+DBSession = Annotated[AsyncSession, Depends(get_db)]
+
+# Redis client dependency
+RedisClient = Annotated[Redis, Depends(get_redis)]
+
+# Current user dependencies
+CurrentUser = Annotated[dict, Depends(get_current_user)]
+CurrentUserOptional = Annotated[Optional[dict], Depends(get_current_user_optional)]
+
+# Current admin dependency
+CurrentAdmin = Annotated[dict, Depends(get_current_admin)]
+
+# Pagination dependency
+Pagination = Annotated[PaginationParams, Depends(get_pagination)]
