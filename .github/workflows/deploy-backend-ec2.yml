@@ -85,7 +85,7 @@ jobs:
             fi
 
             # Check if docker-compose command or plugin is available
-            if ! docker compose version >/dev/null 2>&1; then
+            if ! sudo docker compose version >/dev/null 2>&1; then
               echo "Docker Compose plugin is missing! Installing compose plugin..."
               sudo apt-get install -y docker-compose-plugin
             fi
@@ -171,22 +171,22 @@ jobs:
             sed -i "s|DOCKERHUB_IMAGE_PLACEHOLDER|${{ secrets.DOCKERHUB_USERNAME }}/sribees-backend:latest|g" docker-compose.yml
 
             echo "==== 5. LOGIN AND PULL DOCKER IMAGES ===="
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-            docker compose pull fastapi_backend
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            sudo docker compose pull fastapi_backend
 
             echo "==== 6. DEPLOY SERVICES ===="
-            docker compose down --remove-orphans || true
-            docker compose up -d postgres_db redis_cache
+            sudo docker compose down --remove-orphans || true
+            sudo docker compose up -d postgres_db redis_cache
             
             # Wait a few seconds for postgres/redis health check
             echo "Waiting for databases to initialize..."
             sleep 5
             
-            docker compose up -d fastapi_backend
+            sudo docker compose up -d fastapi_backend
 
             # Run DB migrations
             echo "Running database migrations..."
-            docker compose exec -T fastapi_backend alembic upgrade head || echo "No alembic setup, migration skipped."
+            sudo docker compose exec -T fastapi_backend alembic upgrade head || echo "No alembic setup, migration skipped."
 
             echo "==== 7. NGINX REVERSE PROXY & AUTOMATED Let's Encrypt SSL ===="
             NGINX_CONF="/etc/nginx/sites-available/sribees"
@@ -229,4 +229,4 @@ jobs:
             fi
 
             echo "==== DEPLOYMENT COMPLETED SUCCESSFULLY ===="
-            docker compose ps
+            sudo docker compose ps
