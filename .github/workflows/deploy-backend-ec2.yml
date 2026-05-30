@@ -158,24 +158,22 @@ jobs:
             echo "==== 8. NGINX REVERSE PROXY & SSL ===="
             NGINX_CONF="/etc/nginx/sites-available/sribees"
 
-            sudo tee "$NGINX_CONF" > /dev/null << NGINX_EOF
-            server {
-                listen 80;
-                server_name ${DOMAIN};
-
-                location / {
-                    proxy_pass http://127.0.0.1:8000;
-                    proxy_set_header Host \$host;
-                    proxy_set_header X-Real-IP \$remote_addr;
-                    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-                    proxy_set_header X-Forwarded-Proto \$scheme;
-                    proxy_http_version 1.1;
-                    proxy_set_header Upgrade \$http_upgrade;
-                    proxy_set_header Connection "upgrade";
-                    proxy_read_timeout 86400;
-                }
-            }
-            NGINX_EOF
+            echo "server {" | sudo tee "$NGINX_CONF" > /dev/null
+            echo "    listen 80;" | sudo tee -a "$NGINX_CONF" > /dev/null
+            echo "    server_name ${DOMAIN};" | sudo tee -a "$NGINX_CONF" > /dev/null
+            echo "" | sudo tee -a "$NGINX_CONF" > /dev/null
+            echo "    location / {" | sudo tee -a "$NGINX_CONF" > /dev/null
+            echo "        proxy_pass http://127.0.0.1:8000;" | sudo tee -a "$NGINX_CONF" > /dev/null
+            echo '        proxy_set_header Host $host;' | sudo tee -a "$NGINX_CONF" > /dev/null
+            echo '        proxy_set_header X-Real-IP $remote_addr;' | sudo tee -a "$NGINX_CONF" > /dev/null
+            echo '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' | sudo tee -a "$NGINX_CONF" > /dev/null
+            echo '        proxy_set_header X-Forwarded-Proto $scheme;' | sudo tee -a "$NGINX_CONF" > /dev/null
+            echo "        proxy_http_version 1.1;" | sudo tee -a "$NGINX_CONF" > /dev/null
+            echo '        proxy_set_header Upgrade $http_upgrade;' | sudo tee -a "$NGINX_CONF" > /dev/null
+            echo '        proxy_set_header Connection "upgrade";' | sudo tee -a "$NGINX_CONF" > /dev/null
+            echo "        proxy_read_timeout 86400;" | sudo tee -a "$NGINX_CONF" > /dev/null
+            echo "    }" | sudo tee -a "$NGINX_CONF" > /dev/null
+            echo "}" | sudo tee -a "$NGINX_CONF" > /dev/null
 
             sudo ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
             sudo rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
