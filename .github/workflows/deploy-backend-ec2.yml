@@ -126,10 +126,16 @@ jobs:
             chmod 600 .env
 
             # Extract domain and email safely (defaults if not found)
-            DOMAIN=$(grep -m1 "^HOST_DOMAIN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '[:space:]' || true)
+            DOMAIN=$(grep -m1 "^HOST_DOMAIN=" .env 2>/dev/null | cut -d'=' -f2- || true)
             DOMAIN="${DOMAIN:-api.sribeesonline.lk}"
-            EMAIL=$(grep -m1 "^SSL_EMAIL=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '[:space:]' || true)
+            # Strip comments, spaces, protocol (http/https), and trailing slashes
+            DOMAIN=$(echo "$DOMAIN" | cut -d'#' -f1 | sed -e 's|^[^/]*//||' -e 's|/.*$||' | tr -d '[:space:]')
+
+            EMAIL=$(grep -m1 "^SSL_EMAIL=" .env 2>/dev/null | cut -d'=' -f2- || true)
             EMAIL="${EMAIL:-admin@sribeesonline.lk}"
+            # Strip inline comments and spaces
+            EMAIL=$(echo "$EMAIL" | cut -d'#' -f1 | tr -d '[:space:]')
+
             echo "Domain: $DOMAIN | Email: $EMAIL"
 
             echo "==== 5. WRITE docker-compose.yml (from base64 template) ===="
@@ -187,9 +193,12 @@ jobs:
             sudo systemctl restart nginx
 
             echo "==== 9. SSL AUTO-RENEWAL CRON ===="
-            if ! crontab -l 2>/dev/null | grep -q "certbot renew"; then
-              (crontab -l 2>/dev/null; echo "0 0 * * * certbot renew --post-hook 'systemctl reload nginx'") | crontab -
+            EXISTING_CRON=$(sudo crontab -l 2>/dev/null || true)
+            if ! echo "$EXISTING_CRON" | grep -q "certbot renew"; then
+              (echo "$EXISTING_CRON"; echo "0 0 * * * certbot renew --post-hook 'systemctl reload nginx'") | sudo crontab -
               echo "SSL auto-renewal cron added!"
+            else
+              echo "SSL auto-renewal cron already exists."
             fi
 
             echo ""
