@@ -13,7 +13,7 @@ from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from app.config.redis import get_redis
+from app.config.redis import get_redis_client
 
 
 class RateLimitExceeded(HTTPException):
@@ -111,7 +111,7 @@ class RateLimiter:
         Returns:
             tuple: (is_allowed, remaining_requests, retry_after_seconds)
         """
-        redis = get_redis()
+        redis = get_redis_client()
         if not redis:
             # Redis unavailable - allow request but log warning
             logger.warning("Redis unavailable for rate limiting")
