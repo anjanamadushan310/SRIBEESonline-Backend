@@ -194,11 +194,11 @@ jobs:
 
             echo "==== 9. SSL AUTO-RENEWAL CRON ===="
             EXISTING_CRON=$(sudo crontab -l 2>/dev/null || true)
-            if ! echo "$EXISTING_CRON" | grep -q "certbot renew"; then
+            if echo "$EXISTING_CRON" | grep -q "certbot renew"; then
+              echo "SSL auto-renewal cron already exists."
+            else
               (echo "$EXISTING_CRON"; echo "0 0 * * * certbot renew --post-hook 'systemctl reload nginx'") | sudo crontab -
               echo "SSL auto-renewal cron added!"
-            else
-              echo "SSL auto-renewal cron already exists."
             fi
 
             echo ""
