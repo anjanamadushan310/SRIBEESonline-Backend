@@ -1,27 +1,14 @@
 # =============================================================================
-# SRIBEESonline — CI/CD Pipeline
+# SRIBEESonline — CI Pipeline (Lint & Test)
 #
 # Triggers on push to main/staging and on pull requests.
+# Actual deployment is handled by deploy-backend-ec2.yml (Docker Hub + EC2)
 #
 # Jobs:
-#   1. test     — lint & run backend tests
-#   2. build    — build Docker image, push to registry
-#   3. deploy   — (staging/production) deploy to target environment
-#
-# Required GitHub Secrets:
-#   AWS_ACCESS_KEY_ID         — AWS credentials for S3 & ECR
-#   AWS_SECRET_ACCESS_KEY
-#   AWS_REGION                — e.g. ap-southeast-1
-#   ECR_REPOSITORY            — ECR repo name (e.g. sribeesonline-api)
-#   S3_BUCKET_NAME            — Production S3 bucket
-#   DATABASE_URL              — Production database URL
-#   REDIS_URL                 — Production Redis URL
-#   JWT_SECRET_KEY            — Production JWT secret
-#   GEMINI_API_KEY            — Google AI key for embeddings
-#   SENTRY_DSN                — Sentry error tracking DSN
+#   1. test — lint & run backend tests
 # =============================================================================
 
-name: CI/CD Pipeline
+name: CI — Lint & Test
 
 on:
   push:
@@ -103,121 +90,3 @@ jobs:
           JWT_SECRET_KEY: test-secret-key
           APP_ENV: testing
         run: pytest tests/ -v --tb=short --cov=app --cov-report=xml || true
-
-  # ===========================================================================
-  # Job 2: Build Docker Image
-  # ===========================================================================
-  build:
-    name: Build & Push Docker Image
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.event_name == 'push'
-
-    permissions:
-      id-token: write
-      contents: read
-
-    outputs:
-      image_tag: ${{ steps.meta.outputs.tags }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}
-          tags: |
-            type=sha,prefix=
-            type=ref,event=branch
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ===========================================================================
-  # Job 3: Deploy
-  # ===========================================================================
-  deploy:
-    name: Deploy to ${{ github.ref_name }}
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging'
-
-    environment:
-      name: ${{ github.ref_name == 'main' && 'production' || 'staging' }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Sync splash video to S3 (if present)
-        run: |
-          if [ -f "Grocery_App_Animation_Video_Creation.mp4" ]; then
-            aws s3 cp Grocery_App_Animation_Video_Creation.mp4 \
-              s3://${{ secrets.S3_BUCKET_NAME }}/splash/splash_video_initial.mp4 \
-              --content-type video/mp4 \
-              --cache-control "public, max-age=31536000"
-            echo "Splash video uploaded to S3"
-          else
-            echo "No splash video file found — skipping"
-          fi
-
-      - name: Run database migrations
-        run: |
-          echo "TODO: Run migration 014_create_app_settings.sql against ${{ github.ref_name }} database"
-          echo "This step should use a migration tool or psql to apply pending SQL files."
-
-      # -----------------------------------------------------------------------
-      # Replace the block below with your actual deployment strategy:
-      #   - ECS: aws ecs update-service ...
-      #   - EC2: SSH + docker pull + restart
-      #   - App Runner: aws apprunner update-service ...
-      # -----------------------------------------------------------------------
-      - name: Deploy (placeholder)
-        run: |
-          echo "============================================="
-          echo " Deploying to: ${{ github.ref_name }}"
-          echo " Image:        ${{ needs.build.outputs.image_tag }}"
-          echo "============================================="
-          echo ""
-          echo "Replace this step with your deployment command, e.g.:"
-          echo "  aws ecs update-service --cluster sribees-cluster \\"
-          echo "    --service sribees-api \\"
-          echo "    --force-new-deployment"
-
-      - name: Notify deployment
-        if: success()
-        run: |
-          echo "Deployment to ${{ github.ref_name }} completed successfully."
