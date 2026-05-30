@@ -91,9 +91,9 @@ jobs:
             sudo apt-get install -y curl git gnupg lsb-release certbot python3-certbot-nginx nginx
 
             echo "==== 2. INSTALL DOCKER (if missing) ===="
-            DOCKER_INSTALLED=1
-            command -v docker >/dev/null 2>&1 || DOCKER_INSTALLED=0
-            if [ "$DOCKER_INSTALLED" -eq 0 ]; then
+            if which docker >/dev/null 2>&1; then
+              echo "Docker already installed."
+            else
               echo "Installing Docker..."
               sudo mkdir -p /etc/apt/keyrings
               curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
@@ -107,13 +107,11 @@ jobs:
               sudo systemctl enable docker
               sudo usermod -aG docker "$USER"
               echo "Docker installed!"
-            else
-              echo "Docker already installed."
             fi
 
-            DOCKER_COMPOSE_OK=1
-            sudo docker compose version >/dev/null 2>&1 || DOCKER_COMPOSE_OK=0
-            if [ "$DOCKER_COMPOSE_OK" -eq 0 ]; then
+            if sudo docker compose version >/dev/null 2>&1; then
+              echo "Docker compose already installed."
+            else
               sudo apt-get install -y docker-compose-plugin
             fi
 
