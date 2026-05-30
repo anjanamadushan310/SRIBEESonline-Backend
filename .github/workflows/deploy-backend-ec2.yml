@@ -18,10 +18,16 @@ on:
   push:
     branches: [ main ]
 
+env:
+  DOCKER_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/sribees-backend
+
 jobs:
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
+
+    outputs:
+      compose_b64: ${{ steps.encode.outputs.compose_b64 }}
 
     steps:
       - name: Checkout Code
@@ -44,10 +50,17 @@ jobs:
           target: production
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/sribees-backend:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/sribees-backend:${{ github.sha }}
+            ${{ env.DOCKER_IMAGE }}:latest
+            ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Encode compose template as base64
+        id: encode
+        run: |
+          # Base64 encode the EC2 compose template (avoids heredoc issues over SSH)
+          COMPOSE_B64=$(base64 -w 0 docker/ec2-docker-compose.yml)
+          echo "compose_b64=$COMPOSE_B64" >> "$GITHUB_OUTPUT"
 
   deploy:
     name: Deploy to EC2
@@ -55,147 +68,98 @@ jobs:
     needs: build-and-push
 
     steps:
-      - name: Execute Remote SSH Commands
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          COMPOSE_B64: ${{ needs.build-and-push.outputs.compose_b64 }}
+          ENV_CONTENT: ${{ secrets.ENV_CONTENT }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKER_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/sribees-backend
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
-          script_stop: true  # Stop execution on any error
+          envs: COMPOSE_B64,ENV_CONTENT,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,DOCKER_IMAGE
+          script_stop: true
           script: |
-            echo "==== 1. UPDATE AND INSTALL CORE DEPENDENCIES ===="
+            set -euo pipefail
+
+            echo "==== 1. UPDATE & INSTALL CORE DEPENDENCIES ===="
             sudo apt-get update -y
             sudo apt-get install -y curl git gnupg lsb-release certbot python3-certbot-nginx nginx
 
-            echo "==== 2. AUTOMATIC DOCKER & DOCKER COMPOSE INSTALLATION ===="
-            if ! [ -x "$(command -v docker)" ]; then
-              echo "Docker is missing! Installing Docker automatically..."
+            echo "==== 2. INSTALL DOCKER (if missing) ===="
+            if ! command -v docker &>/dev/null; then
+              echo "Installing Docker..."
               sudo mkdir -p /etc/apt/keyrings
-              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
-              echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+                | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
+              echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+                https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+                | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
               sudo apt-get update -y
               sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
               sudo systemctl start docker
               sudo systemctl enable docker
-              sudo usermod -aG docker ${{ secrets.EC2_USERNAME }}
-              echo "Docker installed successfully!"
+              sudo usermod -aG docker "$USER"
+              echo "Docker installed!"
             else
-              echo "Docker is already installed."
+              echo "Docker already installed."
             fi
 
-            # Check if docker-compose command or plugin is available
-            if ! sudo docker compose version >/dev/null 2>&1; then
-              echo "Docker Compose plugin is missing! Installing compose plugin..."
+            if ! sudo docker compose version &>/dev/null; then
               sudo apt-get install -y docker-compose-plugin
             fi
 
-            echo "==== 3. CREATE DEPLOYMENT DIRECTORIES ===="
-            DEPLOY_DIR="/home/${{ secrets.EC2_USERNAME }}/sribees-backend"
-            sudo mkdir -p $DEPLOY_DIR
-            sudo chown -R ${{ secrets.EC2_USERNAME }}:${{ secrets.EC2_USERNAME }} $DEPLOY_DIR
-            cd $DEPLOY_DIR
+            echo "==== 3. CREATE DEPLOYMENT DIRECTORY ===="
+            DEPLOY_DIR="$HOME/sribees-backend"
+            sudo mkdir -p "$DEPLOY_DIR"
+            sudo chown -R "$USER:$USER" "$DEPLOY_DIR"
+            cd "$DEPLOY_DIR"
 
-            echo "==== 4. WRITE ENVIRONMENT FILE & DOCKER-COMPOSE ===="
-            # Write env file safely
-            echo "${{ secrets.ENV_CONTENT }}" > .env
+            echo "==== 4. WRITE .env FILE ===="
+            printf '%s' "$ENV_CONTENT" > .env
             chmod 600 .env
 
-            # Extract domain and email from .env safely
-            DOMAIN=$(grep "HOST_DOMAIN" .env | cut -d '=' -f2 | xargs || echo "api.sribeesonline.lk")
-            EMAIL=$(grep "SSL_EMAIL" .env | cut -d '=' -f2 | xargs || echo "admin@sribeesonline.lk")
-            
-            # Write a robust docker-compose.prod.yml dynamically
-            cat << 'EOF' > docker-compose.yml
-            version: '3.8'
+            # Extract domain and email safely (defaults if not found)
+            DOMAIN=$(grep -m1 "^HOST_DOMAIN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '[:space:]' || true)
+            DOMAIN="${DOMAIN:-api.sribeesonline.lk}"
+            EMAIL=$(grep -m1 "^SSL_EMAIL=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '[:space:]' || true)
+            EMAIL="${EMAIL:-admin@sribeesonline.lk}"
+            echo "Domain: $DOMAIN | Email: $EMAIL"
 
-            services:
-              postgres_db:
-                image: ankane/pgvector:v0.5.1
-                container_name: sribees_postgres_prod
-                restart: always
-                environment:
-                  POSTGRES_USER: sribees_user
-                  POSTGRES_PASSWORD: sribees_password_123
-                  POSTGRES_DB: sribeesonline
-                volumes:
-                  - postgres_data:/var/lib/postgresql/data
-                ports:
-                  - "5432:5432"
-                networks:
-                  - sribees_net
+            echo "==== 5. WRITE docker-compose.yml (from base64 template) ===="
+            echo "$COMPOSE_B64" | base64 -d > docker-compose.yml
+            sed -i "s|__DOCKER_IMAGE__|${DOCKER_IMAGE}:latest|g" docker-compose.yml
+            echo "docker-compose.yml written. Validating..."
+            sudo docker compose config --quiet && echo "YAML valid!" || { echo "YAML invalid!"; cat docker-compose.yml; exit 1; }
 
-              redis_cache:
-                image: redis:7-alpine
-                container_name: sribees_redis_prod
-                restart: always
-                command: redis-server --appendonly yes --requirepass sribees_redis_password
-                volumes:
-                  - redis_data:/data
-                ports:
-                  - "6379:6379"
-                networks:
-                  - sribees_net
-
-              fastapi_backend:
-                image: DOCKERHUB_IMAGE_PLACEHOLDER
-                container_name: sribees_backend_prod
-                restart: always
-                env_file:
-                  - .env
-                environment:
-                  APP_ENV: production
-                  DEBUG: "false"
-                  DATABASE_URL: postgresql+asyncpg://sribees_user:sribees_password_123@postgres_db:5432/sribeesonline
-                  REDIS_URL: redis://:sribees_redis_password@redis_cache:6379/0
-                ports:
-                  - "8000:8000"
-                depends_on:
-                  - postgres_db
-                  - redis_cache
-                networks:
-                  - sribees_net
-
-            networks:
-              sribees_net:
-                driver: bridge
-
-            volumes:
-              postgres_data:
-                driver: local
-              redis_data:
-                driver: local
-            EOF
-
-            # Replace the image placeholder with the actual Docker Hub image path
-            sed -i "s|DOCKERHUB_IMAGE_PLACEHOLDER|${{ secrets.DOCKERHUB_USERNAME }}/sribees-backend:latest|g" docker-compose.yml
-
-            echo "==== 5. LOGIN AND PULL DOCKER IMAGES ===="
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            echo "==== 6. LOGIN & PULL DOCKER IMAGES ===="
+            echo "$DOCKERHUB_TOKEN" | sudo docker login -u "$DOCKERHUB_USERNAME" --password-stdin
             sudo docker compose pull fastapi_backend
 
-            echo "==== 6. DEPLOY SERVICES ===="
-            sudo docker compose down --remove-orphans || true
+            echo "==== 7. DEPLOY SERVICES ===="
+            sudo docker compose down --remove-orphans 2>/dev/null || true
             sudo docker compose up -d postgres_db redis_cache
-            
-            # Wait a few seconds for postgres/redis health check
-            echo "Waiting for databases to initialize..."
-            sleep 5
-            
+
+            echo "Waiting for databases to become healthy..."
+            sleep 10
+
             sudo docker compose up -d fastapi_backend
 
-            # Run DB migrations
             echo "Running database migrations..."
-            sudo docker compose exec -T fastapi_backend alembic upgrade head || echo "No alembic setup, migration skipped."
+            sudo docker compose exec -T fastapi_backend alembic upgrade head 2>/dev/null \
+              || echo "No alembic setup — migration skipped."
 
-            echo "==== 7. NGINX REVERSE PROXY & AUTOMATED Let's Encrypt SSL ===="
+            echo "==== 8. NGINX REVERSE PROXY & SSL ===="
             NGINX_CONF="/etc/nginx/sites-available/sribees"
-            
-            # Dynamically write Nginx VirtualHost config
-            sudo cat << EOF | sudo tee $NGINX_CONF
+
+            sudo tee "$NGINX_CONF" > /dev/null << NGINX_EOF
             server {
                 listen 80;
-                server_name $DOMAIN;
+                server_name ${DOMAIN};
 
                 location / {
                     proxy_pass http://127.0.0.1:8000;
@@ -203,30 +167,34 @@ jobs:
                     proxy_set_header X-Real-IP \$remote_addr;
                     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
                     proxy_set_header X-Forwarded-Proto \$scheme;
+                    proxy_http_version 1.1;
+                    proxy_set_header Upgrade \$http_upgrade;
+                    proxy_set_header Connection "upgrade";
+                    proxy_read_timeout 86400;
                 }
             }
-            EOF
+            NGINX_EOF
 
-            # Link configuration to sites-enabled
-            sudo ln -sf $NGINX_CONF /etc/nginx/sites-enabled/
-            sudo rm -f /etc/nginx/sites-enabled/default || true
-
-            # Verify Nginx configuration syntax
+            sudo ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
+            sudo rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
             sudo nginx -t
 
-            # Request Let's Encrypt SSL certificate (Certbot will configure Nginx automatically)
             echo "Requesting SSL for $DOMAIN..."
-            sudo certbot --nginx -d $DOMAIN --non-interactive --agree-tos -m $EMAIL --redirect --keep-until-expiring
+            sudo certbot --nginx -d "$DOMAIN" \
+              --non-interactive --agree-tos -m "$EMAIL" \
+              --redirect --keep-until-expiring 2>/dev/null || echo "SSL setup skipped (DNS may not be ready)"
 
-            # Restart Nginx to apply changes
             sudo systemctl restart nginx
 
-            echo "==== 8. CONFIGURING AUTO-RENEWAL CRON ===="
-            # Check if Certbot renewal cron is set, if not add it
+            echo "==== 9. SSL AUTO-RENEWAL CRON ===="
             if ! crontab -l 2>/dev/null | grep -q "certbot renew"; then
               (crontab -l 2>/dev/null; echo "0 0 * * * certbot renew --post-hook 'systemctl reload nginx'") | crontab -
-              echo "SSL Auto-renewal cron job added!"
+              echo "SSL auto-renewal cron added!"
             fi
 
+            echo ""
             echo "==== DEPLOYMENT COMPLETED SUCCESSFULLY ===="
             sudo docker compose ps
+            echo ""
+            echo "API: https://${DOMAIN}/health"
+            echo "Docs: https://${DOMAIN}/docs"

@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  postgres_db:
+    image: ankane/pgvector:v0.5.1
+    container_name: sribees_postgres_prod
+    restart: always
+    environment:
+      POSTGRES_USER: sribees_user
+      POSTGRES_PASSWORD: sribees_password_123
+      POSTGRES_DB: sribeesonline
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sribees_user -d sribeesonline"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sribees_net
+
+  redis_cache:
+    image: redis:7-alpine
+    container_name: sribees_redis_prod
+    restart: always
+    command: redis-server --appendonly yes --requirepass sribees_redis_password
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "sribees_redis_password", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sribees_net
+
+  fastapi_backend:
+    image: __DOCKER_IMAGE__
+    container_name: sribees_backend_prod
+    restart: always
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+      DATABASE_URL: postgresql+asyncpg://sribees_user:sribees_password_123@postgres_db:5432/sribeesonline
+      REDIS_URL: redis://:sribees_redis_password@redis_cache:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      redis_cache:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    networks:
+      - sribees_net
+
+networks:
+  sribees_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
