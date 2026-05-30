@@ -1,12 +1,12 @@
 """
 Product Pydantic Schemas
 """
-from pydantic import BaseModel, Field
-from typing import Optional, List
-from uuid import UUID
 from datetime import datetime
 from decimal import Decimal
+from typing import List, Optional
+from uuid import UUID
 
+from pydantic import BaseModel, Field
 
 # ============================================================================
 # Nested Schemas
@@ -19,7 +19,7 @@ class ProductImageSchema(BaseModel):
     alt_text: Optional[str] = None
     is_primary: bool = False
     sort_order: int = 0
-    
+
     model_config = {"from_attributes": True}
 
 
@@ -29,7 +29,7 @@ class ProductCategorySchema(BaseModel):
     name: str
     slug: str
     image_url: Optional[str] = None
-    
+
     model_config = {"from_attributes": True}
 
 
@@ -39,7 +39,7 @@ class VariantTypeSchema(BaseModel):
     name: str
     display_name: str
     options: List[str] = []
-    
+
     model_config = {"from_attributes": True}
 
 
@@ -53,7 +53,7 @@ class ProductVariantSchema(BaseModel):
     stock_quantity: int = 0
     image_url: Optional[str] = None
     is_active: bool = True
-    
+
     model_config = {"from_attributes": True}
 
 
@@ -143,7 +143,7 @@ class ProductBase(BaseModel):
     view_count: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    
+
     model_config = {"from_attributes": True}
 
 
@@ -155,7 +155,7 @@ class ProductResponse(ProductBase):
     has_variants: bool = False
     variants: Optional[List[ProductVariantSchema]] = None
     variant_types: Optional[List[VariantTypeSchema]] = None
-    
+
     @property
     def _id(self) -> str:
         return str(self.product_id)
@@ -174,7 +174,7 @@ class ProductListItem(BaseModel):
     is_featured: bool
     category: Optional[ProductCategorySchema] = None
     images: List[ProductImageSchema] = []
-    
+
     model_config = {"from_attributes": True}
 
 

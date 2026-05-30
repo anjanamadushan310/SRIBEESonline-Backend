@@ -5,18 +5,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
+from app.core.dependencies import get_current_admin, require_super_admin
 from app.schemas.admin_auth import (
-    AdminLoginRequest,
     AdminAuthResponse,
-    AdminProfileResponse,
     AdminListResponse,
-    CreateAdminRequest,
+    AdminLoginRequest,
+    AdminProfileResponse,
     AdminResponse,
     BranchListResponse,
+    CreateAdminRequest,
 )
 from app.schemas.auth import MessageResponse
 from app.services.admin_auth_service import AdminAuthService
-from app.core.dependencies import get_current_admin, require_super_admin
 
 router = APIRouter()
 
@@ -79,7 +79,7 @@ async def create_admin(
 ) -> AdminResponse:
     """
     Create a new admin user.
-    
+
     Only Super Admins can create new admin users.
     """
     try:
@@ -103,7 +103,7 @@ async def list_admins(
 ) -> AdminListResponse:
     """
     List all admin users.
-    
+
     Only Super Admins can list admin users.
     """
     return await AdminAuthService.list_admins(db)
@@ -121,7 +121,7 @@ async def list_branches(
 ) -> BranchListResponse:
     """
     List all branches.
-    
+
     Returns empty list if no branches configured.
     """
     # TODO: Implement branch model if needed

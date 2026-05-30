@@ -1,11 +1,11 @@
 """
 Category Pydantic Schemas
 """
-from pydantic import BaseModel, Field
-from typing import Optional, List
-from uuid import UUID
 from datetime import datetime
+from typing import List, Optional
+from uuid import UUID
 
+from pydantic import BaseModel, Field
 
 # ============================================================================
 # Request Schemas
@@ -44,7 +44,7 @@ class CategoryBase(BaseModel):
     image_url: Optional[str] = None
     parent_category_id: Optional[UUID] = None
     is_active: bool
-    
+
     model_config = {"from_attributes": True}
 
 
@@ -54,7 +54,7 @@ class CategoryResponse(CategoryBase):
     product_count: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    
+
     @property
     def _id(self) -> str:
         return str(self.category_id)
@@ -69,7 +69,7 @@ class CategoriesListResponse(BaseModel):
     """Response for list of categories."""
     success: bool = True
     data: dict
-    
+
     @classmethod
     def from_categories(cls, categories: List[CategoryResponse]):
         return cls(

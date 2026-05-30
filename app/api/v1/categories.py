@@ -1,25 +1,18 @@
 """
 Category API Endpoints
 """
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
-from app.core.dependencies import get_current_user, get_current_admin
-from app.services.category_service import CategoryService
+from app.core.dependencies import get_current_admin
 from app.schemas.category import (
     CategoryCreate,
     CategoryUpdate,
-    CategoryResponse,
-    CategoryWithChildren,
-    CategoriesListResponse,
-    CategoryDetailResponse,
-    CategoryCreateResponse,
-    CategoryUpdateResponse,
-    CategoryDeleteResponse,
 )
+from app.services.category_service import CategoryService
 
 router = APIRouter(prefix="/categories", tags=["Categories"])
 
@@ -36,7 +29,7 @@ async def get_categories(
 ):
     """
     Get all categories.
-    
+
     - **hierarchical**: If true, returns categories in parent-child tree structure
     - **include_inactive**: If true, includes inactive categories (admin use)
     """
@@ -60,7 +53,7 @@ async def get_categories(
                 }
                 for cat in categories_raw
             ]
-        
+
         return {
             "success": True,
             "data": {
@@ -84,13 +77,13 @@ async def get_category(
     Get a single category by ID or slug.
     """
     category = await CategoryService.get_by_id_or_slug(db, category_id)
-    
+
     if not category:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Category not found"
         )
-    
+
     return {
         "success": True,
         "data": {
@@ -126,11 +119,11 @@ async def create_category(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Category with this slug already exists"
         )
-    
+
     try:
         category = await CategoryService.create(db, data)
         logger.info(f"Category created: {category.category_id} - {category.name}")
-        
+
         return {
             "success": True,
             "data": {
@@ -164,13 +157,13 @@ async def update_category(
     Update a category. (Admin only)
     """
     category = await CategoryService.get_by_id_or_slug(db, category_id)
-    
+
     if not category:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Category not found"
         )
-    
+
     # Check for duplicate slug if changing
     if data.slug and data.slug != category.slug:
         existing = await CategoryService.get_by_slug(db, data.slug)
@@ -179,11 +172,11 @@ async def update_category(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Category with this slug already exists"
             )
-    
+
     try:
         updated_category = await CategoryService.update(db, category, data)
         logger.info(f"Category updated: {updated_category.category_id}")
-        
+
         return {
             "success": True,
             "data": {
@@ -216,13 +209,13 @@ async def delete_category(
     Delete a category. (Admin only)
     """
     category = await CategoryService.get_by_id_or_slug(db, category_id)
-    
+
     if not category:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Category not found"
         )
-    
+
     # Check if category has products
     has_products = await CategoryService.has_products(db, category.category_id)
     if has_products:
@@ -230,11 +223,11 @@ async def delete_category(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot delete category with products. Remove products first or reassign them."
         )
-    
+
     try:
         await CategoryService.delete(db, category)
         logger.info(f"Category deleted: {category_id}")
-        
+
         return {
             "success": True,
             "message": "Category deleted successfully"

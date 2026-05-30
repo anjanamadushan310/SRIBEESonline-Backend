@@ -9,14 +9,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # ============================================================================
 # Request Schemas
 # ============================================================================
 
 class SearchFiltersRequest(BaseModel):
     """Search filter parameters."""
-    
+
     category_id: Optional[UUID] = Field(
         None,
         description="Filter by category ID"
@@ -41,7 +40,7 @@ class SearchFiltersRequest(BaseModel):
         le=1.0,
         description="Minimum similarity score (0.0-1.0)"
     )
-    
+
     @field_validator('max_price')
     @classmethod
     def validate_price_range(cls, v, info):
@@ -54,7 +53,7 @@ class SearchFiltersRequest(BaseModel):
 
 class SearchPaginationRequest(BaseModel):
     """Pagination parameters."""
-    
+
     page: int = Field(
         1,
         ge=1,
@@ -66,7 +65,7 @@ class SearchPaginationRequest(BaseModel):
         le=100,
         description="Results per page (max 100)"
     )
-    
+
     @property
     def offset(self) -> int:
         return (self.page - 1) * self.page_size
@@ -74,7 +73,7 @@ class SearchPaginationRequest(BaseModel):
 
 class SearchOptionsRequest(BaseModel):
     """Additional search options."""
-    
+
     include_facets: bool = Field(
         False,
         description="Include faceted aggregations"
@@ -88,14 +87,14 @@ class SearchOptionsRequest(BaseModel):
 class SemanticSearchRequest(BaseModel):
     """
     Semantic search request.
-    
+
     Supports multilingual queries in:
     - English
     - Sinhala (සිංහල)
     - Tamil (தமிழ்)
     - Singlish
     """
-    
+
     query: str = Field(
         ...,
         min_length=1,
@@ -114,7 +113,7 @@ class SemanticSearchRequest(BaseModel):
         None,
         description="Additional search options"
     )
-    
+
     @field_validator('query')
     @classmethod
     def validate_query(cls, v):
@@ -122,7 +121,7 @@ class SemanticSearchRequest(BaseModel):
         if not v or not v.strip():
             raise ValueError('Query cannot be empty')
         return v.strip()
-    
+
     model_config = {
         "json_schema_extra": {
             "examples": [
@@ -158,14 +157,14 @@ class SemanticSearchRequest(BaseModel):
 
 class CategoryInfo(BaseModel):
     """Category information in search results."""
-    
+
     id: Optional[str] = None
     name: Optional[str] = None
 
 
 class ProductSearchResultResponse(BaseModel):
     """Individual product in search results."""
-    
+
     product_id: str = Field(..., description="Product UUID")
     name: str = Field(..., description="Product name")
     slug: str = Field(..., description="URL-friendly slug")
@@ -190,7 +189,7 @@ class ProductSearchResultResponse(BaseModel):
 
 class PaginationResponse(BaseModel):
     """Pagination metadata."""
-    
+
     page: int = Field(..., description="Current page number")
     page_size: int = Field(..., description="Results per page")
     total_results: int = Field(..., description="Total matching results")
@@ -201,7 +200,7 @@ class PaginationResponse(BaseModel):
 
 class SearchMetadataResponse(BaseModel):
     """Search metadata."""
-    
+
     query: str = Field(..., description="Original search query")
     search_type: str = Field(
         ...,
@@ -213,7 +212,7 @@ class SearchMetadataResponse(BaseModel):
 
 class FacetBucket(BaseModel):
     """Individual facet bucket."""
-    
+
     key: str
     count: int
     label: Optional[str] = None
@@ -221,7 +220,7 @@ class FacetBucket(BaseModel):
 
 class FacetsResponse(BaseModel):
     """Faceted search aggregations."""
-    
+
     categories: Optional[List[FacetBucket]] = None
     price_ranges: Optional[List[Dict[str, Any]]] = None
     stock_status: Optional[List[FacetBucket]] = None
@@ -230,10 +229,10 @@ class FacetsResponse(BaseModel):
 class SemanticSearchResponse(BaseModel):
     """
     Semantic search response.
-    
+
     Contains search results with metadata, pagination, and optional facets.
     """
-    
+
     results: List[ProductSearchResultResponse] = Field(
         ...,
         description="List of matching products"
@@ -250,7 +249,7 @@ class SemanticSearchResponse(BaseModel):
         None,
         description="Faceted aggregations (if requested)"
     )
-    
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -298,7 +297,7 @@ class SemanticSearchResponse(BaseModel):
 
 class SearchSuggestionsRequest(BaseModel):
     """Request for search suggestions/autocomplete."""
-    
+
     query: str = Field(
         ...,
         min_length=2,
@@ -315,7 +314,7 @@ class SearchSuggestionsRequest(BaseModel):
 
 class SearchSuggestionsResponse(BaseModel):
     """Response with search suggestions."""
-    
+
     suggestions: List[str] = Field(
         ...,
         description="List of suggested search queries"
@@ -332,14 +331,14 @@ class SearchSuggestionsResponse(BaseModel):
 
 class PopularSearchItem(BaseModel):
     """Individual popular search item."""
-    
+
     query: str = Field(..., description="Search query")
     count: int = Field(..., description="Number of searches")
 
 
 class PopularSearchesResponse(BaseModel):
     """Response with popular searches."""
-    
+
     searches: List[PopularSearchItem] = Field(
         ...,
         description="List of popular searches"
@@ -352,11 +351,11 @@ class PopularSearchesResponse(BaseModel):
 
 class SearchErrorResponse(BaseModel):
     """Error response for search failures."""
-    
+
     success: bool = Field(False)
     message: str = Field(..., description="Error message")
     error_code: str = Field(..., description="Error code for client handling")
-    
+
     model_config = {
         "json_schema_extra": {
             "example": {

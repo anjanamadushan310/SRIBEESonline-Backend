@@ -5,24 +5,26 @@ Main router that aggregates all API v1 endpoints.
 """
 from fastapi import APIRouter
 
-from app.api.v1 import auth
-from app.api.v1 import categories
-from app.api.v1 import products
-from app.api.v1 import cart
-from app.api.v1 import wishlist
-from app.api.v1 import orders
-from app.api.v1 import payments
-from app.api.v1 import notifications
-from app.api.v1 import admin
-from app.api.v1 import admin_auth
-from app.api.v1 import admin_locations
-from app.api.v1 import admin_settings
-from app.api.v1 import app_public
-from app.api.v1 import branch
-from app.api.v1 import inventory
-from app.api.v1 import locations
-from app.api.v1 import marketing
-from app.api.v1 import search
+from app.api.v1 import (
+    admin,
+    admin_auth,
+    admin_locations,
+    admin_settings,
+    app_public,
+    auth,
+    branch,
+    cart,
+    categories,
+    inventory,
+    locations,
+    marketing,
+    notifications,
+    orders,
+    payments,
+    products,
+    search,
+    wishlist,
+)
 
 # Create main v1 router
 router = APIRouter(prefix="/v1")

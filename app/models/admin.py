@@ -6,7 +6,8 @@ from enum import Enum
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum as SQLEnum, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
+from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -24,9 +25,9 @@ class AdminRole(str, Enum):
 
 class Admin(Base):
     """Admin user model for admin panel access."""
-    
+
     __tablename__ = "admins"
-    
+
     admin_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         primary_key=True,
@@ -54,16 +55,16 @@ class Admin(Base):
         onupdate=func.now(),
         nullable=False,
     )
-    
+
     def __repr__(self) -> str:
         return f"<Admin {self.email} ({self.role})>"
 
 
 class AdminSession(Base):
     """Admin session for JWT token management."""
-    
+
     __tablename__ = "admin_sessions"
-    
+
     session_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         primary_key=True,
@@ -85,6 +86,6 @@ class AdminSession(Base):
         server_default=func.now(),
         nullable=False,
     )
-    
+
     # Relationships
     admin: Mapped["Admin"] = relationship("Admin", backref="sessions")

@@ -43,10 +43,10 @@ Base = declarative_base()
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency that provides an async database session.
-    
+
     Yields:
         AsyncSession: Database session for the request
-        
+
     Usage:
         @router.get("/items")
         async def get_items(db: AsyncSession = Depends(get_db)):
@@ -67,7 +67,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
     """
     Context manager for database sessions outside of request context.
-    
+
     Usage:
         async with get_db_context() as db:
             result = await db.execute(query)
@@ -86,7 +86,7 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
 async def init_db() -> None:
     """
     Initialize database connection and verify connectivity.
-    
+
     Called during application startup.
     """
     try:
@@ -103,7 +103,7 @@ async def init_db() -> None:
 async def close_db() -> None:
     """
     Close database connections.
-    
+
     Called during application shutdown.
     """
     await engine.dispose()

@@ -3,9 +3,10 @@ SRIBEESonline - Review Schemas
 
 Pydantic schemas for product reviews API.
 """
-from typing import Optional, List
-from uuid import UUID
 from datetime import datetime
+from typing import List, Optional
+from uuid import UUID
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -16,7 +17,7 @@ class ReviewCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=200)
     comment: Optional[str] = Field(None, max_length=5000)
     order_id: Optional[UUID] = None  # Optional: link to purchase for verified review
-    
+
     @field_validator("title", "comment", mode="before")
     @classmethod
     def strip_strings(cls, v):
@@ -38,7 +39,7 @@ class ReviewUserResponse(BaseModel):
     first_name: str
     last_name: Optional[str] = None
     avatar_url: Optional[str] = None
-    
+
     class Config:
         from_attributes = True
 
@@ -56,10 +57,10 @@ class ReviewResponse(BaseModel):
     not_helpful_count: int = 0
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+
     # User info (without sensitive data)
     user: Optional[ReviewUserResponse] = None
-    
+
     class Config:
         from_attributes = True
 

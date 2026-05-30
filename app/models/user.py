@@ -17,12 +17,12 @@ from app.config.database import Base
 class User(Base):
     """
     User model representing customer accounts.
-    
+
     Maps to the 'users' table in PostgreSQL.
     """
-    
+
     __tablename__ = "users"
-    
+
     # Primary key
     user_id: UUID = Column(
         PG_UUID(as_uuid=True),
@@ -30,7 +30,7 @@ class User(Base):
         default=uuid4,
         nullable=False,
     )
-    
+
     # Account info
     email: str = Column(
         String(255),
@@ -54,14 +54,14 @@ class User(Base):
         Text,
         nullable=True,
     )
-    
+
     # Verification status
     is_verified: bool = Column(
         Boolean,
         default=False,
         nullable=False,
     )
-    
+
     # Two-factor authentication
     two_factor_enabled: bool = Column(
         Boolean,
@@ -72,7 +72,7 @@ class User(Base):
         String(255),
         nullable=True,
     )
-    
+
     # Timestamps
     created_at: datetime = Column(
         DateTime,
@@ -89,7 +89,7 @@ class User(Base):
         DateTime,
         nullable=True,
     )
-    
+
     # User role for authorization
     role: str = Column(
         String(20),
@@ -109,7 +109,7 @@ class User(Base):
         String(50),
         nullable=True,
     )
-    
+
     # Relationships
     addresses = relationship("Address", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
@@ -118,17 +118,17 @@ class User(Base):
     wishlist_items = relationship("WishlistItem", back_populates="user", cascade="all, delete-orphan")
     notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
     push_tokens = relationship("PushToken", back_populates="user", cascade="all, delete-orphan")
-    
+
     def __repr__(self) -> str:
         return f"<User(user_id={self.user_id}, email={self.email})>"
-    
+
     def to_dict(self, include_sensitive: bool = False) -> dict:
         """
         Convert user to dictionary.
-        
+
         Args:
             include_sensitive: Include sensitive fields like password_hash
-            
+
         Returns:
             dict: User data
         """
@@ -144,23 +144,23 @@ class User(Base):
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
             "lastLogin": self.last_login.isoformat() if self.last_login else None,
         }
-        
+
         if include_sensitive:
             data["passwordHash"] = self.password_hash
             data["twoFactorSecret"] = self.two_factor_secret
-            
+
         return data
 
 
 class EmailVerification(Base):
     """
     Email verification token model.
-    
+
     Maps to the 'email_verifications' table in PostgreSQL.
     """
-    
+
     __tablename__ = "email_verifications"
-    
+
     verification_id: UUID = Column(
         PG_UUID(as_uuid=True),
         primary_key=True,
@@ -187,7 +187,7 @@ class EmailVerification(Base):
         server_default=func.now(),
         nullable=False,
     )
-    
+
     def __repr__(self) -> str:
         return f"<EmailVerification(verification_id={self.verification_id}, user_id={self.user_id})>"
 
@@ -195,12 +195,12 @@ class EmailVerification(Base):
 class PasswordReset(Base):
     """
     Password reset token model.
-    
+
     Maps to the 'password_resets' table in PostgreSQL.
     """
-    
+
     __tablename__ = "password_resets"
-    
+
     reset_id: UUID = Column(
         PG_UUID(as_uuid=True),
         primary_key=True,
@@ -232,7 +232,7 @@ class PasswordReset(Base):
         server_default=func.now(),
         nullable=False,
     )
-    
+
     def __repr__(self) -> str:
         return f"<PasswordReset(reset_id={self.reset_id}, user_id={self.user_id})>"
 
@@ -240,13 +240,13 @@ class PasswordReset(Base):
 class Session(Base):
     """
     User session model.
-    
+
     Maps to the 'sessions' table in PostgreSQL.
     Serves as fallback when Redis is unavailable.
     """
-    
+
     __tablename__ = "sessions"
-    
+
     session_id: UUID = Column(
         PG_UUID(as_uuid=True),
         primary_key=True,
@@ -280,10 +280,10 @@ class Session(Base):
         server_default=func.now(),
         nullable=False,
     )
-    
+
     # Relationship
     user = relationship("User", back_populates="sessions")
-    
+
     def __repr__(self) -> str:
         return f"<Session(session_id={self.session_id}, user_id={self.user_id})>"
 
@@ -291,12 +291,12 @@ class Session(Base):
 class Address(Base):
     """
     User address model.
-    
+
     Maps to the 'addresses' table in PostgreSQL.
     """
-    
+
     __tablename__ = "addresses"
-    
+
     address_id: UUID = Column(
         PG_UUID(as_uuid=True),
         primary_key=True,
@@ -349,13 +349,13 @@ class Address(Base):
         onupdate=func.now(),
         nullable=False,
     )
-    
+
     # Relationship
     user = relationship("User", back_populates="addresses")
-    
+
     def __repr__(self) -> str:
         return f"<Address(address_id={self.address_id}, user_id={self.user_id})>"
-    
+
     def to_dict(self) -> dict:
         """Convert address to dictionary."""
         return {

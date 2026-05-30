@@ -6,12 +6,11 @@ Provides specialised helpers for the splash-video use-case.
 """
 from typing import Optional
 
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
 from app.models.app_settings import AppSetting
-
 
 # Well-known setting keys
 SPLASH_VIDEO_KEY = "splash_video_url"

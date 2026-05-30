@@ -3,24 +3,24 @@ SRIBEESonline - Review Service
 
 Business logic for product reviews and ratings.
 """
-from typing import Optional, List, Tuple, Dict
-from uuid import UUID
 from datetime import datetime
+from typing import List, Optional, Tuple
+from uuid import UUID
 
-from sqlalchemy import select, func, and_, update, case
-from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
+from sqlalchemy import and_, case, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.review import ProductReview, ReviewVote
-from app.models.product import Product
 from app.models.order import Order, OrderItem
-from app.schemas.review import ReviewCreate, ReviewUpdate, ReviewSummary
+from app.models.product import Product
+from app.models.review import ProductReview, ReviewVote
+from app.schemas.review import ReviewCreate, ReviewSummary, ReviewUpdate
 
 
 class ReviewService:
     """Service class for product review operations."""
-    
+
     @staticmethod
     async def create_review(
         db: AsyncSession,
@@ -29,7 +29,7 @@ class ReviewService:
     ) -> ProductReview:
         """
         Create a new product review.
-        
+
         Checks if user has purchased the product for verified status.
         """
         # Check if user already reviewed this product
@@ -43,12 +43,12 @@ class ReviewService:
         )
         if existing.scalar_one_or_none():
             raise ValueError("You have already reviewed this product")
-        
+
         # Check if this is a verified purchase
         is_verified = await ReviewService._is_verified_purchase(
             db, user_id, data.product_id, data.order_id
         )
-        
+
         # Create review
         review = ProductReview(
             product_id=data.product_id,
@@ -59,18 +59,18 @@ class ReviewService:
             comment=data.comment,
             is_verified_purchase=is_verified,
         )
-        
+
         db.add(review)
         await db.commit()
         await db.refresh(review)
-        
+
         # Update product average rating
         await ReviewService._update_product_rating(db, data.product_id)
-        
+
         logger.info(f"Review created: {review.review_id} for product {data.product_id}")
-        
+
         return review
-    
+
     @staticmethod
     async def _is_verified_purchase(
         db: AsyncSession,
@@ -90,13 +90,13 @@ class ReviewService:
                 )
             )
         )
-        
+
         if order_id:
             query = query.where(Order.order_id == order_id)
-        
+
         result = await db.execute(query.limit(1))
         return result.scalar_one_or_none() is not None
-    
+
     @staticmethod
     async def _update_product_rating(db: AsyncSession, product_id: UUID) -> None:
         """Update product's average rating and review count."""
@@ -113,7 +113,7 @@ class ReviewService:
             )
         )
         row = stats.first()
-        
+
         if row:
             await db.execute(
                 update(Product)
@@ -124,7 +124,7 @@ class ReviewService:
                 )
             )
             await db.commit()
-    
+
     @staticmethod
     async def get_review(db: AsyncSession, review_id: UUID) -> Optional[ProductReview]:
         """Get a single review by ID."""
@@ -134,7 +134,7 @@ class ReviewService:
             .where(ProductReview.review_id == review_id)
         )
         return result.scalar_one_or_none()
-    
+
     @staticmethod
     async def get_product_reviews(
         db: AsyncSession,
@@ -158,19 +158,19 @@ class ReviewService:
                 )
             )
         )
-        
+
         # Filters
         if rating_filter:
             query = query.where(ProductReview.rating == rating_filter)
-        
+
         if verified_only:
             query = query.where(ProductReview.is_verified_purchase == True)
-        
+
         # Count total
         count_query = select(func.count()).select_from(query.subquery())
         total_result = await db.execute(count_query)
         total = total_result.scalar() or 0
-        
+
         # Sorting
         if sort_by == "helpful":
             query = query.order_by(ProductReview.helpful_count.desc())
@@ -180,15 +180,15 @@ class ReviewService:
             query = query.order_by(ProductReview.rating.asc())
         else:  # newest
             query = query.order_by(ProductReview.created_at.desc())
-        
+
         # Pagination
         query = query.limit(limit).offset(offset)
-        
+
         result = await db.execute(query)
         reviews = result.scalars().all()
-        
+
         return reviews, total
-    
+
     @staticmethod
     async def get_user_reviews(
         db: AsyncSession,
@@ -203,16 +203,16 @@ class ReviewService:
             .where(ProductReview.user_id == user_id)
             .order_by(ProductReview.created_at.desc())
         )
-        
+
         count_query = select(func.count()).select_from(query.subquery())
         total_result = await db.execute(count_query)
         total = total_result.scalar() or 0
-        
+
         query = query.limit(limit).offset(offset)
         result = await db.execute(query)
-        
+
         return result.scalars().all(), total
-    
+
     @staticmethod
     async def update_review(
         db: AsyncSession,
@@ -230,10 +230,10 @@ class ReviewService:
             )
         )
         review = result.scalar_one_or_none()
-        
+
         if not review:
             return None
-        
+
         # Update fields
         if data.rating is not None:
             review.rating = data.rating
@@ -241,17 +241,17 @@ class ReviewService:
             review.title = data.title
         if data.comment is not None:
             review.comment = data.comment
-        
+
         review.updated_at = datetime.utcnow()
-        
+
         await db.commit()
         await db.refresh(review)
-        
+
         # Update product rating
         await ReviewService._update_product_rating(db, review.product_id)
-        
+
         return review
-    
+
     @staticmethod
     async def delete_review(
         db: AsyncSession,
@@ -268,20 +268,20 @@ class ReviewService:
             )
         )
         review = result.scalar_one_or_none()
-        
+
         if not review:
             return False
-        
+
         product_id = review.product_id
-        
+
         await db.delete(review)
         await db.commit()
-        
+
         # Update product rating
         await ReviewService._update_product_rating(db, product_id)
-        
+
         return True
-    
+
     @staticmethod
     async def vote_review(
         db: AsyncSession,
@@ -291,7 +291,7 @@ class ReviewService:
     ) -> Tuple[int, int, Optional[bool]]:
         """
         Vote on a review's helpfulness.
-        
+
         Returns: (helpful_count, not_helpful_count, user_vote)
         """
         # Check existing vote
@@ -304,16 +304,16 @@ class ReviewService:
             )
         )
         existing_vote = result.scalar_one_or_none()
-        
+
         # Get review
         review_result = await db.execute(
             select(ProductReview).where(ProductReview.review_id == review_id)
         )
         review = review_result.scalar_one_or_none()
-        
+
         if not review:
             raise ValueError("Review not found")
-        
+
         if existing_vote:
             if existing_vote.is_helpful == is_helpful:
                 # Same vote - remove it (toggle off)
@@ -321,7 +321,7 @@ class ReviewService:
                     review.helpful_count = max(0, review.helpful_count - 1)
                 else:
                     review.not_helpful_count = max(0, review.not_helpful_count - 1)
-                
+
                 await db.delete(existing_vote)
                 user_vote = None
             else:
@@ -332,7 +332,7 @@ class ReviewService:
                 else:
                     review.not_helpful_count += 1
                     review.helpful_count = max(0, review.helpful_count - 1)
-                
+
                 existing_vote.is_helpful = is_helpful
                 user_vote = is_helpful
         else:
@@ -343,18 +343,18 @@ class ReviewService:
                 is_helpful=is_helpful,
             )
             db.add(vote)
-            
+
             if is_helpful:
                 review.helpful_count += 1
             else:
                 review.not_helpful_count += 1
-            
+
             user_vote = is_helpful
-        
+
         await db.commit()
-        
+
         return review.helpful_count, review.not_helpful_count, user_vote
-    
+
     @staticmethod
     async def get_review_summary(
         db: AsyncSession,
@@ -375,12 +375,12 @@ class ReviewService:
             )
             .group_by(ProductReview.rating)
         )
-        
+
         dist_result = await db.execute(dist_query)
         rating_dist = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
         for row in dist_result:
             rating_dist[row.rating] = row.count
-        
+
         # Get aggregate stats
         stats_query = select(
             func.count(ProductReview.review_id).label("total"),
@@ -397,10 +397,10 @@ class ReviewService:
                 ProductReview.is_approved == True,
             )
         )
-        
+
         stats_result = await db.execute(stats_query)
         stats = stats_result.first()
-        
+
         return ReviewSummary(
             product_id=product_id,
             total_reviews=stats.total or 0,

@@ -3,20 +3,19 @@ Admin Auth Service
 """
 import secrets
 from datetime import datetime, timedelta
-from typing import Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import hash_password, verify_password, create_token_pair
-from app.models.admin import Admin, AdminSession, AdminRole
+from app.core.security import create_token_pair, hash_password, verify_password
+from app.models.admin import Admin, AdminRole, AdminSession
 from app.schemas.admin_auth import (
     AdminAuthResponse,
+    AdminListResponse,
+    AdminProfileResponse,
     AdminResponse,
     AdminTokensResponse,
-    AdminProfileResponse,
-    AdminListResponse,
     CreateAdminRequest,
 )
 from app.utils.logger import logger
@@ -24,7 +23,7 @@ from app.utils.logger import logger
 
 class AdminAuthService:
     """Admin authentication service."""
-    
+
     @staticmethod
     async def login(email: str, password: str, db: AsyncSession) -> AdminAuthResponse:
         """
@@ -35,22 +34,22 @@ class AdminAuthService:
             select(Admin).where(Admin.email == email.lower())
         )
         admin = result.scalar_one_or_none()
-        
+
         if not admin:
             raise ValueError("Invalid email or password")
-        
+
         if not admin.is_active:
             raise ValueError("Account is disabled")
-        
+
         # Verify password
         if not verify_password(password, admin.password_hash):
             raise ValueError("Invalid email or password")
-        
+
         # Create session
         session_id = uuid4()
         refresh_token = secrets.token_urlsafe(64)
         expires_at = datetime.utcnow() + timedelta(days=7)
-        
+
         session = AdminSession(
             session_id=session_id,
             admin_id=admin.admin_id,
@@ -58,13 +57,13 @@ class AdminAuthService:
             expires_at=expires_at,
         )
         db.add(session)
-        
+
         # Update last login
         admin.last_login = datetime.utcnow()
-        
+
         await db.commit()
         await db.refresh(admin)
-        
+
         # Generate tokens
         tokens = create_token_pair(
             user_id=admin.admin_id,
@@ -73,9 +72,9 @@ class AdminAuthService:
             is_admin=True,
             role=admin.role.value,
         )
-        
+
         logger.info(f"Admin logged in: {admin.email}")
-        
+
         return AdminAuthResponse(
             success=True,
             message="Login successful",
@@ -94,7 +93,7 @@ class AdminAuthService:
                 refresh_token=tokens["refresh_token"],
             ),
         )
-    
+
     @staticmethod
     async def get_profile(admin_id: UUID, db: AsyncSession) -> AdminProfileResponse:
         """
@@ -104,10 +103,10 @@ class AdminAuthService:
             select(Admin).where(Admin.admin_id == admin_id)
         )
         admin = result.scalar_one_or_none()
-        
+
         if not admin:
             raise ValueError("Admin not found")
-        
+
         return AdminProfileResponse(
             success=True,
             admin=AdminResponse(
@@ -121,7 +120,7 @@ class AdminAuthService:
                 created_at=admin.created_at,
             ),
         )
-    
+
     @staticmethod
     async def create_admin(
         data: CreateAdminRequest,
@@ -137,7 +136,7 @@ class AdminAuthService:
         )
         if result.scalar_one_or_none():
             raise ValueError("Email already registered")
-        
+
         # Create admin
         admin = Admin(
             admin_id=uuid4(),
@@ -148,13 +147,13 @@ class AdminAuthService:
             branch_id=data.branch_id,
             is_active=True,
         )
-        
+
         db.add(admin)
         await db.commit()
         await db.refresh(admin)
-        
+
         logger.info(f"Admin created: {admin.email} by admin {created_by}")
-        
+
         return AdminResponse(
             admin_id=admin.admin_id,
             email=admin.email,
@@ -165,7 +164,7 @@ class AdminAuthService:
             last_login=admin.last_login,
             created_at=admin.created_at,
         )
-    
+
     @staticmethod
     async def list_admins(db: AsyncSession) -> AdminListResponse:
         """
@@ -175,7 +174,7 @@ class AdminAuthService:
             select(Admin).order_by(Admin.created_at.desc())
         )
         admins = result.scalars().all()
-        
+
         return AdminListResponse(
             success=True,
             admins=[
@@ -193,7 +192,7 @@ class AdminAuthService:
             ],
             total=len(admins),
         )
-    
+
     @staticmethod
     async def logout(admin_id: UUID, db: AsyncSession) -> dict:
         """
@@ -203,5 +202,5 @@ class AdminAuthService:
             delete(AdminSession).where(AdminSession.admin_id == admin_id)
         )
         await db.commit()
-        
+
         return {"success": True, "message": "Logged out successfully"}

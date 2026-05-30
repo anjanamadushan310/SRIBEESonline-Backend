@@ -1,19 +1,20 @@
 """
 Admin API Endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from typing import Optional
 from datetime import datetime, timedelta
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from loguru import logger
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
 from app.core.dependencies import get_current_admin
-from app.models.user import User
-from app.models.product import Product
 from app.models.category import Category
 from app.models.order import Order, OrderStatus, PaymentStatus
+from app.models.product import Product
+from app.models.user import User
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -34,37 +35,37 @@ async def get_dashboard_stats(
         # Total users
         users_result = await db.execute(select(func.count(User.user_id)))
         total_users = users_result.scalar() or 0
-        
+
         # Total products
         products_result = await db.execute(
             select(func.count(Product.product_id)).where(Product.is_active == True)
         )
         total_products = products_result.scalar() or 0
-        
+
         # Total categories
         categories_result = await db.execute(
             select(func.count(Category.category_id)).where(Category.is_active == True)
         )
         total_categories = categories_result.scalar() or 0
-        
+
         # Total orders
         orders_result = await db.execute(select(func.count(Order.order_id)))
         total_orders = orders_result.scalar() or 0
-        
+
         # Pending orders
         pending_orders_result = await db.execute(
             select(func.count(Order.order_id))
             .where(Order.status == OrderStatus.PENDING.value)
         )
         pending_orders = pending_orders_result.scalar() or 0
-        
+
         # Total revenue (paid orders)
         revenue_result = await db.execute(
             select(func.sum(Order.total_amount))
             .where(Order.payment_status == PaymentStatus.PAID.value)
         )
         total_revenue = float(revenue_result.scalar() or 0)
-        
+
         # Today's orders
         today = datetime.utcnow().date()
         today_orders_result = await db.execute(
@@ -72,7 +73,7 @@ async def get_dashboard_stats(
             .where(func.date(Order.created_at) == today)
         )
         today_orders = today_orders_result.scalar() or 0
-        
+
         # Today's revenue
         today_revenue_result = await db.execute(
             select(func.sum(Order.total_amount))
@@ -82,7 +83,7 @@ async def get_dashboard_stats(
             )
         )
         today_revenue = float(today_revenue_result.scalar() or 0)
-        
+
         # Low stock products
         low_stock_result = await db.execute(
             select(func.count(Product.product_id))
@@ -92,7 +93,7 @@ async def get_dashboard_stats(
             )
         )
         low_stock_products = low_stock_result.scalar() or 0
-        
+
         return {
             "success": True,
             "data": {
@@ -144,7 +145,7 @@ async def get_revenue_analytics(
         }
         days = periods.get(period, 7)
         start_date = datetime.utcnow() - timedelta(days=days)
-        
+
         # Get daily revenue
         result = await db.execute(
             select(
@@ -159,7 +160,7 @@ async def get_revenue_analytics(
             .group_by(func.date(Order.created_at))
             .order_by(func.date(Order.created_at))
         )
-        
+
         daily_data = [
             {
                 "date": row.date.isoformat() if row.date else None,
@@ -168,12 +169,12 @@ async def get_revenue_analytics(
             }
             for row in result.all()
         ]
-        
+
         # Calculate totals
         total_revenue = sum(d["revenue"] for d in daily_data)
         total_orders = sum(d["orders"] for d in daily_data)
         avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
-        
+
         return {
             "success": True,
             "data": {
@@ -211,9 +212,9 @@ async def get_order_analytics(
             )
             .group_by(Order.status)
         )
-        
+
         status_counts = {row.status: row.count for row in result.all()}
-        
+
         # Get payment status counts
         payment_result = await db.execute(
             select(
@@ -222,9 +223,9 @@ async def get_order_analytics(
             )
             .group_by(Order.payment_status)
         )
-        
+
         payment_counts = {row.payment_status: row.count for row in payment_result.all()}
-        
+
         return {
             "success": True,
             "data": {
@@ -258,7 +259,7 @@ async def get_users(
     """
     try:
         query = select(User)
-        
+
         if search:
             search_pattern = f"%{search}%"
             query = query.where(
@@ -266,21 +267,21 @@ async def get_users(
                 User.first_name.ilike(search_pattern) |
                 User.last_name.ilike(search_pattern)
             )
-        
+
         if role:
             query = query.where(User.role == role)
-        
+
         # Count
         count_query = select(func.count()).select_from(query.subquery())
         total_result = await db.execute(count_query)
         total = total_result.scalar()
-        
+
         # Get users
         offset = (page - 1) * limit
         query = query.order_by(User.created_at.desc()).limit(limit).offset(offset)
         result = await db.execute(query)
         users = result.scalars().all()
-        
+
         return {
             "success": True,
             "data": {
@@ -328,21 +329,21 @@ async def update_user_role(
     try:
         from uuid import UUID
         user_uuid = UUID(user_id)
-        
+
         result = await db.execute(
             select(User).where(User.user_id == user_uuid)
         )
         user = result.scalar_one_or_none()
-        
+
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
             )
-        
+
         user.role = role
         await db.commit()
-        
+
         return {
             "success": True,
             "message": f"User role updated to {role}"
@@ -375,21 +376,21 @@ async def toggle_user_status(
     try:
         from uuid import UUID
         user_uuid = UUID(user_id)
-        
+
         result = await db.execute(
             select(User).where(User.user_id == user_uuid)
         )
         user = result.scalar_one_or_none()
-        
+
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
             )
-        
+
         user.is_active = is_active
         await db.commit()
-        
+
         status_text = "enabled" if is_active else "disabled"
         return {
             "success": True,
@@ -434,7 +435,7 @@ async def get_low_stock_products(
             .limit(limit)
         )
         products = result.scalars().all()
-        
+
         return {
             "success": True,
             "data": {
@@ -470,7 +471,7 @@ async def get_recent_orders(
     """
     try:
         from sqlalchemy.orm import selectinload
-        
+
         result = await db.execute(
             select(Order)
             .options(selectinload(Order.user))
@@ -478,7 +479,7 @@ async def get_recent_orders(
             .limit(limit)
         )
         orders = result.scalars().all()
-        
+
         return {
             "success": True,
             "data": {

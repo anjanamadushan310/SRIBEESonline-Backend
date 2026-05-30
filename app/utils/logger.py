@@ -14,12 +14,12 @@ from app.config.settings import settings
 def setup_logger() -> None:
     """
     Configure Loguru logger with console and file handlers.
-    
+
     Should be called once during application startup.
     """
     # Remove default handler
     logger.remove()
-    
+
     # Console handler (always enabled)
     logger.add(
         sys.stdout,
@@ -29,12 +29,12 @@ def setup_logger() -> None:
         backtrace=True,
         diagnose=settings.debug,
     )
-    
+
     # File handler (if log file path is configured)
     if settings.log_file:
         log_path = Path(settings.log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         logger.add(
             settings.log_file,
             format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
@@ -45,12 +45,12 @@ def setup_logger() -> None:
             backtrace=True,
             diagnose=False,  # Don't include sensitive info in file logs
         )
-    
+
     # JSON log file for production (structured logs)
     if settings.app_env == "production":
         json_log_path = Path(settings.log_file).parent / "app.json.log" if settings.log_file else Path("logs/app.json.log")
         json_log_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         logger.add(
             str(json_log_path),
             format="{message}",

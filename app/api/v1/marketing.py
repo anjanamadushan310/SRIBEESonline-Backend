@@ -12,11 +12,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
 from app.config.database import get_db
 from app.core.dependencies import require_roles
-from app.core.exceptions import BranchAccessDeniedError, ProductNotFoundError
 from app.schemas.product import BranchInventoryUpdateRequest
 from app.services.product_service import ProductService
 

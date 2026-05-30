@@ -7,24 +7,24 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
+from app.core.dependencies import CurrentUser
 from app.schemas.auth import (
-    RegisterRequest,
-    LoginRequest,
-    VerifyEmailRequest,
-    ResendVerificationRequest,
-    ForgotPasswordRequest,
-    ResetPasswordRequest,
-    RefreshTokenRequest,
-    ChangePasswordRequest,
-    RegisterResponse,
     AuthResponse,
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
+    LoginRequest,
     MessageResponse,
-    RefreshTokenResponse,
     ProfileResponse,
+    RefreshTokenRequest,
+    RefreshTokenResponse,
+    RegisterRequest,
+    RegisterResponse,
+    ResendVerificationRequest,
+    ResetPasswordRequest,
     SessionsListResponse,
+    VerifyEmailRequest,
 )
 from app.services.auth_service import AuthService
-from app.core.dependencies import CurrentUser
 
 router = APIRouter()
 
@@ -42,11 +42,11 @@ async def register(
 ) -> RegisterResponse:
     """
     Register a new user account.
-    
+
     - **email**: Valid email address (must be unique)
     - **password**: Minimum 8 characters with uppercase, lowercase, and digit
     - **full_name**: User's display name
-    
+
     Returns the created user (unverified) and sends a verification email.
     """
     return await AuthService.register(data, db)
@@ -64,11 +64,11 @@ async def login(
 ) -> AuthResponse:
     """
     Authenticate user with email and password.
-    
+
     - **email**: Registered email address
     - **password**: User's password
     - **remember_me**: If true, extends refresh token to 30 days
-    
+
     Returns user data and JWT access/refresh tokens.
     """
     return await AuthService.login(data, db)
@@ -86,9 +86,9 @@ async def verify_email(
 ) -> MessageResponse:
     """
     Verify email address using verification token.
-    
+
     - **token**: Verification token received via email
-    
+
     Marks the user's email as verified.
     """
     return await AuthService.verify_email(data.token, db)
@@ -106,9 +106,9 @@ async def resend_verification(
 ) -> MessageResponse:
     """
     Resend email verification link.
-    
+
     - **email**: Email address to send verification link
-    
+
     Always returns success for security (doesn't reveal if email exists).
     """
     return await AuthService.resend_verification_email(data.email, db)
@@ -126,9 +126,9 @@ async def forgot_password(
 ) -> MessageResponse:
     """
     Request password reset.
-    
+
     - **email**: Email address for password reset
-    
+
     Always returns success for security (doesn't reveal if email exists).
     """
     return await AuthService.forgot_password(data.email, db)
@@ -146,10 +146,10 @@ async def reset_password(
 ) -> MessageResponse:
     """
     Reset password using reset token.
-    
+
     - **token**: Password reset token from email
     - **password**: New password (min 8 characters)
-    
+
     Updates user's password and invalidates the reset token.
     """
     return await AuthService.reset_password(data.token, data.password, db)
@@ -167,9 +167,9 @@ async def refresh_token(
 ) -> RefreshTokenResponse:
     """
     Refresh JWT access token.
-    
+
     - **refresh_token**: Valid refresh token
-    
+
     Returns new access and refresh tokens.
     """
     return await AuthService.refresh_token(data.refresh_token, db)
@@ -187,7 +187,7 @@ async def logout(
 ) -> MessageResponse:
     """
     Logout current user.
-    
+
     Requires authentication. Invalidates the current session.
     """
     return await AuthService.logout(current_user, db)
@@ -205,7 +205,7 @@ async def logout_all(
 ) -> MessageResponse:
     """
     Logout from all devices.
-    
+
     Requires authentication. Invalidates all active sessions.
     """
     return await AuthService.logout_all(current_user, db)
@@ -224,13 +224,13 @@ async def change_password(
 ) -> MessageResponse:
     """
     Change user's password.
-    
+
     Requires current password verification.
     """
     return await AuthService.change_password(
-        current_user, 
-        data.current_password, 
-        data.new_password, 
+        current_user,
+        data.current_password,
+        data.new_password,
         db
     )
 
@@ -247,7 +247,7 @@ async def get_profile(
 ) -> ProfileResponse:
     """
     Get current user's profile.
-    
+
     Returns full user profile data.
     """
     return await AuthService.get_profile(current_user, db)
@@ -265,7 +265,7 @@ async def get_sessions(
 ) -> SessionsListResponse:
     """
     Get all active sessions.
-    
+
     Returns list of all active sessions for the current user.
     """
     return await AuthService.get_sessions(current_user, db)
@@ -284,7 +284,7 @@ async def revoke_session(
 ) -> MessageResponse:
     """
     Revoke a specific session.
-    
+
     Cannot revoke the current session (use logout instead).
     """
     return await AuthService.revoke_session(current_user, session_id, db)

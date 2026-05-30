@@ -1,21 +1,21 @@
 """
 Order API Endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
-from app.core.dependencies import get_current_user, get_current_admin
-from app.services.order_service import OrderService
+from app.core.dependencies import get_current_admin, get_current_user
 from app.schemas.order import (
     CreateOrderRequest,
     UpdateOrderStatusRequest,
     UpdatePaymentStatusRequest,
-    OrderStatusEnum,
 )
+from app.services.order_service import OrderService
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -49,7 +49,7 @@ def format_order(order, include_items: bool = True) -> dict:
         "delivered_at": order.delivered_at.isoformat() if order.delivered_at else None,
         "cancelled_at": order.cancelled_at.isoformat() if order.cancelled_at else None,
     }
-    
+
     # Delivery address
     if order.delivery_address:
         data["delivery_address"] = {
@@ -63,7 +63,7 @@ def format_order(order, include_items: bool = True) -> dict:
         }
     else:
         data["delivery_address"] = None
-    
+
     # Items
     if include_items and order.items:
         data["items"] = [
@@ -85,7 +85,7 @@ def format_order(order, include_items: bool = True) -> dict:
     else:
         data["items"] = []
         data["item_count"] = 0
-    
+
     return data
 
 
@@ -121,10 +121,10 @@ async def create_order(
             user_id=current_user.user_id,
             data=data
         )
-        
+
         # Reload with relationships
         order = await OrderService.get_by_id(db, order.order_id)
-        
+
         return {
             "success": True,
             "data": format_order(order),
@@ -163,7 +163,7 @@ async def get_my_orders(
             offset=offset,
             status=status
         )
-        
+
         return {
             "success": True,
             "data": {
@@ -200,13 +200,13 @@ async def get_order(
             order = await OrderService.get_by_id(db, order_uuid, current_user.user_id)
         except ValueError:
             order = await OrderService.get_by_order_number(db, order_id, current_user.user_id)
-        
+
         if not order:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Order not found"
             )
-        
+
         return {
             "success": True,
             "data": format_order(order)
@@ -234,15 +234,15 @@ async def cancel_order(
     try:
         order_uuid = UUID(order_id)
         order = await OrderService.get_by_id(db, order_uuid, current_user.user_id)
-        
+
         if not order:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Order not found"
             )
-        
+
         order = await OrderService.cancel_order(db, order, reason)
-        
+
         return {
             "success": True,
             "data": format_order(order),
@@ -288,7 +288,7 @@ async def get_all_orders(
             status=status,
             payment_status=payment_status
         )
-        
+
         return {
             "success": True,
             "data": {
@@ -322,15 +322,15 @@ async def update_order_status(
     try:
         order_uuid = UUID(order_id)
         order = await OrderService.get_by_id(db, order_uuid)
-        
+
         if not order:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Order not found"
             )
-        
+
         order = await OrderService.update_status(db, order, data.status)
-        
+
         return {
             "success": True,
             "data": format_order(order),
@@ -359,17 +359,17 @@ async def update_payment_status(
     try:
         order_uuid = UUID(order_id)
         order = await OrderService.get_by_id(db, order_uuid)
-        
+
         if not order:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Order not found"
             )
-        
+
         order = await OrderService.update_payment_status(
             db, order, data.payment_status, data.payment_id
         )
-        
+
         return {
             "success": True,
             "data": format_order(order),
@@ -395,13 +395,13 @@ async def get_order_stats(
     """
     try:
         stats = await OrderService.get_revenue_stats(db)
-        
+
         # Get counts by status
         pending_count = await OrderService.get_order_count(db, status="pending")
         processing_count = await OrderService.get_order_count(db, status="processing")
         shipped_count = await OrderService.get_order_count(db, status="shipped")
         delivered_count = await OrderService.get_order_count(db, status="delivered")
-        
+
         return {
             "success": True,
             "data": {

@@ -1,13 +1,12 @@
 """
 Order Pydantic Schemas
 """
-from pydantic import BaseModel, Field
-from typing import Optional, List
-from uuid import UUID
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
+from typing import List, Optional
 
+from pydantic import BaseModel, Field
 
 # ============================================================================
 # Enums
@@ -58,7 +57,7 @@ class OrderItemResponse(BaseModel):
     unit_price: float
     subtotal: float
     tax_amount: float = 0
-    
+
     model_config = {"from_attributes": True}
 
 
@@ -115,7 +114,7 @@ class OrderSummary(BaseModel):
     total_amount: float
     item_count: int
     created_at: datetime
-    
+
     model_config = {"from_attributes": True}
 
 
@@ -124,39 +123,39 @@ class OrderResponse(BaseModel):
     order_id: str
     order_number: str
     user_id: str
-    
+
     # Amounts
     subtotal: float
     tax_amount: float
     shipping_amount: float
     discount_amount: float
     total_amount: float
-    
+
     # Status
     status: str
     payment_status: str
     payment_method: Optional[str] = None
     payment_id: Optional[str] = None
-    
+
     # Delivery
     delivery_address: Optional[DeliveryAddressSchema] = None
     delivery_slot_date: Optional[datetime] = None
     delivery_slot_time: Optional[str] = None
-    
+
     # Additional
     coupon_code: Optional[str] = None
     notes: Optional[str] = None
-    
+
     # Items
     items: List[OrderItemResponse] = []
-    
+
     # Timestamps
     created_at: datetime
     updated_at: Optional[datetime] = None
     shipped_at: Optional[datetime] = None
     delivered_at: Optional[datetime] = None
     cancelled_at: Optional[datetime] = None
-    
+
     model_config = {"from_attributes": True}
 
 

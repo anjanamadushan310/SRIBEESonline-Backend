@@ -7,7 +7,7 @@ URL, feature flags, and other dynamic configuration.
 """
 import uuid
 
-from sqlalchemy import Column, String, Text, Boolean, DateTime, func
+from sqlalchemy import Boolean, Column, DateTime, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.config.database import Base

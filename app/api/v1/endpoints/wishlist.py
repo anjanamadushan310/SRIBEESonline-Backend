@@ -3,21 +3,18 @@ SRIBEESonline - Wishlist API Endpoints
 
 API routes for user wishlist operations.
 """
-from typing import Optional, List
-from uuid import UUID
 from decimal import Decimal
+from typing import List, Optional
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.services.wishlist_service import WishlistService
-from app.services.notification_service import NotificationService
-from app.schemas.notification import NotificationTypeEnum
-
 
 router = APIRouter(prefix="/wishlist", tags=["Wishlist"])
 
@@ -40,14 +37,14 @@ class WishlistItemResponse(BaseModel):
     variant_id: Optional[UUID] = None
     price_at_watch: Optional[Decimal] = None
     added_at: str
-    
+
     # Product details (populated)
     product_name: Optional[str] = None
     product_image: Optional[str] = None
     current_price: Optional[Decimal] = None
     is_in_stock: bool = True
     has_price_drop: bool = False
-    
+
     class Config:
         from_attributes = True
 
@@ -80,22 +77,22 @@ async def get_wishlist(
 ):
     """
     Get the current user's wishlist.
-    
+
     Returns all wishlist items with product details.
     """
     items = await WishlistService.get_by_user_id(db, current_user.user_id)
-    
+
     response_items = []
     for item in items:
         product = item.product
-        
+
         # Calculate if there's a price drop
         has_price_drop = False
         current_price = product.sale_price or product.price if product else None
-        
+
         if item.price_at_watch and current_price:
             has_price_drop = current_price < item.price_at_watch
-        
+
         response_items.append(WishlistItemResponse(
             wishlist_item_id=item.wishlist_item_id,
             product_id=item.product_id,
@@ -108,7 +105,7 @@ async def get_wishlist(
             is_in_stock=product.stock_quantity > 0 if product else False,
             has_price_drop=has_price_drop,
         ))
-    
+
     return WishlistResponse(
         items=response_items,
         total_items=len(response_items),
@@ -123,7 +120,7 @@ async def add_to_wishlist(
 ):
     """
     Add a product to the wishlist.
-    
+
     If product already exists, updates the price_at_watch.
     """
     item = await WishlistService.add_item(
@@ -133,11 +130,11 @@ async def add_to_wishlist(
         variant_id=data.variant_id,
         price_at_watch=data.price_at_watch,
     )
-    
+
     # Refresh to get product details
     await db.refresh(item)
     product = item.product
-    
+
     return WishlistItemResponse(
         wishlist_item_id=item.wishlist_item_id,
         product_id=item.product_id,
@@ -165,7 +162,7 @@ async def remove_from_wishlist(
         product_id=product_id,
         variant_id=variant_id,
     )
-    
+
     if not removed:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -181,12 +178,12 @@ async def check_wishlist_status(
 ):
     """
     Check if multiple products are in the wishlist.
-    
+
     Useful for displaying wishlist status on product listings.
     """
     wishlist_items = await WishlistService.get_by_user_id(db, current_user.user_id)
     wishlist_product_ids = {item.product_id for item in wishlist_items}
-    
+
     return [
         WishlistCheckResponse(
             product_id=pid,
@@ -215,11 +212,11 @@ async def move_to_cart(
 ):
     """
     Move an item from wishlist to cart.
-    
+
     Adds to cart and removes from wishlist.
     """
     from app.services.cart_service import CartService
-    
+
     # Add to cart
     cart = await CartService.add_item(
         db,
@@ -228,7 +225,7 @@ async def move_to_cart(
         variant_id=variant_id,
         quantity=quantity,
     )
-    
+
     # Remove from wishlist
     await WishlistService.remove_item(
         db,
@@ -236,5 +233,5 @@ async def move_to_cart(
         product_id=product_id,
         variant_id=variant_id,
     )
-    
+
     return {"message": "Item moved to cart", "cart_item_count": len(cart.items) if cart else 0}

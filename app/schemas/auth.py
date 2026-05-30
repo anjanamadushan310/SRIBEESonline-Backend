@@ -9,14 +9,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-
 # ============================================================================
 # Request Schemas
 # ============================================================================
 
 class RegisterRequest(BaseModel):
     """User registration request schema."""
-    
+
     email: EmailStr = Field(..., description="User's email address")
     password: str = Field(
         ...,
@@ -30,7 +29,7 @@ class RegisterRequest(BaseModel):
         max_length=100,
         description="User's full name",
     )
-    
+
     @field_validator("password")
     @classmethod
     def validate_password(cls, v: str) -> str:
@@ -44,13 +43,13 @@ class RegisterRequest(BaseModel):
         if not any(c.isdigit() for c in v):
             raise ValueError("Password must contain at least one digit")
         return v
-    
+
     @field_validator("full_name")
     @classmethod
     def validate_full_name(cls, v: str) -> str:
         """Strip whitespace from name."""
         return v.strip()
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -63,14 +62,14 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     """User login request schema."""
-    
+
     email: EmailStr = Field(..., description="User's email address")
     password: str = Field(..., description="User's password")
     remember_me: bool = Field(
         default=False,
         description="Extend session to 30 days",
     )
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -83,9 +82,9 @@ class LoginRequest(BaseModel):
 
 class VerifyEmailRequest(BaseModel):
     """Email verification request schema."""
-    
+
     token: str = Field(..., description="Verification token from email")
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -96,9 +95,9 @@ class VerifyEmailRequest(BaseModel):
 
 class ResendVerificationRequest(BaseModel):
     """Resend verification email request schema."""
-    
+
     email: EmailStr = Field(..., description="User's email address")
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -109,9 +108,9 @@ class ResendVerificationRequest(BaseModel):
 
 class ForgotPasswordRequest(BaseModel):
     """Forgot password request schema."""
-    
+
     email: EmailStr = Field(..., description="User's email address")
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -122,7 +121,7 @@ class ForgotPasswordRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     """Reset password request schema."""
-    
+
     token: str = Field(..., description="Password reset token from email")
     password: str = Field(
         ...,
@@ -130,7 +129,7 @@ class ResetPasswordRequest(BaseModel):
         max_length=128,
         description="New password (min 8 characters)",
     )
-    
+
     @field_validator("password")
     @classmethod
     def validate_password(cls, v: str) -> str:
@@ -144,7 +143,7 @@ class ResetPasswordRequest(BaseModel):
         if not any(c.isdigit() for c in v):
             raise ValueError("Password must contain at least one digit")
         return v
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -156,9 +155,9 @@ class ResetPasswordRequest(BaseModel):
 
 class RefreshTokenRequest(BaseModel):
     """Refresh token request schema."""
-    
+
     refresh_token: str = Field(..., description="JWT refresh token")
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -169,7 +168,7 @@ class RefreshTokenRequest(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     """Change password request schema."""
-    
+
     current_password: str = Field(..., description="Current password")
     new_password: str = Field(
         ...,
@@ -177,7 +176,7 @@ class ChangePasswordRequest(BaseModel):
         max_length=128,
         description="New password (min 8 characters)",
     )
-    
+
     @field_validator("new_password")
     @classmethod
     def validate_password(cls, v: str) -> str:
@@ -199,7 +198,7 @@ class ChangePasswordRequest(BaseModel):
 
 class UserResponse(BaseModel):
     """User data response schema."""
-    
+
     user_id: UUID = Field(..., alias="userId")
     email: EmailStr
     full_name: str = Field(..., alias="fullName")
@@ -210,7 +209,7 @@ class UserResponse(BaseModel):
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
     last_login: Optional[datetime] = Field(None, alias="lastLogin")
-    
+
     class Config:
         from_attributes = True
         populate_by_name = True
@@ -232,10 +231,10 @@ class UserResponse(BaseModel):
 
 class TokensResponse(BaseModel):
     """JWT tokens response schema."""
-    
+
     access_token: str = Field(..., alias="accessToken")
     refresh_token: str = Field(..., alias="refreshToken")
-    
+
     class Config:
         populate_by_name = True
         json_schema_extra = {
@@ -248,12 +247,12 @@ class TokensResponse(BaseModel):
 
 class AuthResponse(BaseModel):
     """Successful authentication response schema."""
-    
+
     success: bool = True
     message: str
     user: UserResponse
     tokens: TokensResponse
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -278,11 +277,11 @@ class AuthResponse(BaseModel):
 
 class RegisterResponse(BaseModel):
     """Registration response schema."""
-    
+
     success: bool = True
     message: str
     user: UserResponse
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -301,10 +300,10 @@ class RegisterResponse(BaseModel):
 
 class MessageResponse(BaseModel):
     """Simple message response schema."""
-    
+
     success: bool = True
     message: str
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -316,11 +315,11 @@ class MessageResponse(BaseModel):
 
 class RefreshTokenResponse(BaseModel):
     """Token refresh response schema."""
-    
+
     success: bool = True
     message: str = "Token refreshed successfully"
     tokens: TokensResponse
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -336,7 +335,7 @@ class RefreshTokenResponse(BaseModel):
 
 class SessionResponse(BaseModel):
     """Session info response schema."""
-    
+
     session_id: str = Field(..., alias="sessionId")
     device: Optional[str] = None
     ip_address: Optional[str] = Field(None, alias="ipAddress")
@@ -344,7 +343,7 @@ class SessionResponse(BaseModel):
     created_at: datetime = Field(..., alias="createdAt")
     last_active: Optional[datetime] = Field(None, alias="lastActive")
     is_current: bool = Field(False, alias="isCurrent")
-    
+
     class Config:
         from_attributes = True
         populate_by_name = True
@@ -352,13 +351,13 @@ class SessionResponse(BaseModel):
 
 class SessionsListResponse(BaseModel):
     """List of sessions response."""
-    
+
     success: bool = True
     sessions: list[SessionResponse]
 
 
 class ProfileResponse(BaseModel):
     """User profile response."""
-    
+
     success: bool = True
     user: UserResponse

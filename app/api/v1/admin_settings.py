@@ -8,15 +8,15 @@ the splash-screen animation video.
   GET  /splash-video   — retrieve current splash video details
 """
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from loguru import logger
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
 from app.config.database import get_db
-from app.config.redis import get_redis, RedisKeys, RedisTTL
+from app.config.redis import get_redis
 from app.config.settings import settings
 from app.core.dependencies import require_roles
-from app.schemas.app_settings import SplashVideoResponse, SplashVideoUploadResponse
+from app.schemas.app_settings import SplashVideoResponse
 from app.services.app_settings_service import AppSettingsService
 from app.services.storage_service import StorageService
 

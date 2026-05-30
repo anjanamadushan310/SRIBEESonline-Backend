@@ -1,19 +1,20 @@
 """
 Cart API Endpoints (Redis-based)
 """
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
 from app.core.dependencies import get_current_user
-from app.services.cart_service import CartService
 from app.schemas.cart import (
     AddToCartRequest,
-    UpdateCartItemRequest,
     ApplyCouponRequest,
+    UpdateCartItemRequest,
 )
+from app.services.cart_service import CartService
 
 router = APIRouter(prefix="/cart", tags=["Cart"])
 
@@ -31,7 +32,7 @@ async def get_cart(
     """
     try:
         cart = await CartService.get_cart(str(current_user.user_id))
-        
+
         return {
             "success": True,
             "data": cart
@@ -63,7 +64,7 @@ async def add_to_cart(
             sku=data.sku,
             variant_id=data.variant_id
         )
-        
+
         return {
             "success": True,
             "data": cart,
@@ -94,7 +95,7 @@ async def update_cart_item(
             quantity=data.quantity,
             variant_id=variant_id
         )
-        
+
         return {
             "success": True,
             "data": cart,
@@ -128,7 +129,7 @@ async def remove_from_cart(
             product_id=product_id,
             variant_id=variant_id
         )
-        
+
         return {
             "success": True,
             "data": cart,
@@ -151,7 +152,7 @@ async def clear_cart(
     """
     try:
         await CartService.clear_cart(str(current_user.user_id))
-        
+
         return {
             "success": True,
             "message": "Cart cleared successfully"
@@ -172,7 +173,7 @@ async def apply_coupon(
 ):
     """
     Apply a coupon to cart.
-    
+
     Note: In production, validate coupon from database.
     """
     try:
@@ -197,7 +198,7 @@ async def apply_coupon(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid coupon code"
             )
-        
+
         return {
             "success": True,
             "data": cart,
@@ -222,7 +223,7 @@ async def remove_coupon(
     """
     try:
         cart = await CartService.remove_coupon(str(current_user.user_id))
-        
+
         return {
             "success": True,
             "data": cart,
@@ -245,7 +246,7 @@ async def get_cart_count(
     """
     try:
         count = await CartService.get_item_count(str(current_user.user_id))
-        
+
         return {
             "success": True,
             "data": {
@@ -271,7 +272,7 @@ async def merge_cart(
 ):
     """
     Merge guest cart with user cart (on login).
-    
+
     Used when a guest adds items to cart and then logs in.
     """
     try:
@@ -279,7 +280,7 @@ async def merge_cart(
             user_id=str(current_user.user_id),
             guest_items=guest_cart.get("items", [])
         )
-        
+
         return {
             "success": True,
             "data": cart,
@@ -300,7 +301,7 @@ async def sync_cart(
 ):
     """
     Sync local cart with server (for offline-first mobile).
-    
+
     Merges local changes with server state using timestamps.
     """
     try:
@@ -308,7 +309,7 @@ async def sync_cart(
             user_id=str(current_user.user_id),
             local_cart=local_cart
         )
-        
+
         return {
             "success": True,
             "data": cart,
@@ -331,7 +332,7 @@ async def get_sync_status(
     """
     try:
         cart = await CartService.get_cart(str(current_user.user_id))
-        
+
         return {
             "success": True,
             "data": {
@@ -355,12 +356,12 @@ async def validate_cart(
 ):
     """
     Validate cart before checkout.
-    
+
     Checks stock availability and prices for all items.
     """
     try:
         cart = await CartService.get_cart(str(current_user.user_id))
-        
+
         # TODO: Add actual product validation against database
         validation_result = {
             "valid": True,
@@ -368,7 +369,7 @@ async def validate_cart(
             "issues": [],
             "totals": cart.get("totals", {})
         }
-        
+
         return {
             "success": True,
             "data": validation_result,

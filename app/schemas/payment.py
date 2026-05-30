@@ -1,10 +1,10 @@
 """
 Payment Pydantic Schemas
 """
-from pydantic import BaseModel, Field
-from typing import Optional
 from datetime import datetime
+from typing import Optional
 
+from pydantic import BaseModel, Field
 
 # ============================================================================
 # Request Schemas
@@ -76,7 +76,7 @@ class SavedCardResponse(BaseModel):
     exp_year: int = Field(..., alias="expYear")
     is_default: bool = Field(False, alias="isDefault")
     created_at: datetime = Field(..., alias="createdAt")
-    
+
     class Config:
         from_attributes = True
         populate_by_name = True
@@ -97,7 +97,7 @@ class PaymentHistoryItem(BaseModel):
     status: str
     payment_method: str = Field(..., alias="paymentMethod")
     created_at: datetime = Field(..., alias="createdAt")
-    
+
     class Config:
         from_attributes = True
         populate_by_name = True

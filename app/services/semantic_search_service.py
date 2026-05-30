@@ -13,7 +13,6 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
@@ -25,12 +24,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.redis import get_redis
 from app.services.embedding_service import (
-    GeminiEmbeddingService,
-    GeminiAPIError,
     CircuitOpenError,
+    GeminiAPIError,
+    GeminiEmbeddingService,
     get_embedding_service,
 )
-
 
 # ============================================================================
 # Configuration
@@ -95,11 +93,11 @@ class ProductSearchResult:
     category_name: Optional[str]
     similarity_score: Optional[float]
     relevance_score: Optional[float]
-    
+
     @property
     def in_stock(self) -> bool:
         return self.stock_quantity > 0
-    
+
     @property
     def discount_percentage(self) -> Optional[float]:
         if self.compare_at_price and self.compare_at_price > self.price:
@@ -107,7 +105,7 @@ class ProductSearchResult:
                 (self.compare_at_price - self.price) / self.compare_at_price * 100
             )
         return None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API response."""
         return {
@@ -139,7 +137,7 @@ class SemanticSearchResult:
     took_ms: int
     from_cache: bool
     facets: Optional[Dict[str, Any]] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API response."""
         return {
@@ -162,24 +160,24 @@ class SemanticSearchResult:
 class SemanticSearchService:
     """
     Service for semantic product search.
-    
+
     Combines:
     - Gemini embeddings for semantic understanding
     - pgvector for efficient similarity search
     - Redis caching for performance
     - Fallback keyword search for resilience
     """
-    
+
     def __init__(self, db: AsyncSession):
         self.db = db
         self._embedding_service: Optional[GeminiEmbeddingService] = None
-    
+
     async def _get_embedding_service(self) -> GeminiEmbeddingService:
         """Get embedding service instance."""
         if self._embedding_service is None:
             self._embedding_service = await get_embedding_service()
         return self._embedding_service
-    
+
     def _generate_cache_key(
         self,
         query: str,
@@ -200,7 +198,7 @@ class SemanticSearchService:
         key_str = json.dumps(key_data, sort_keys=True)
         hash_value = hashlib.sha256(key_str.encode()).hexdigest()[:16]
         return f"search:semantic:{hash_value}"
-    
+
     async def _get_cached_results(
         self,
         cache_key: str
@@ -210,17 +208,17 @@ class SemanticSearchService:
             redis = await get_redis()
             if redis is None:
                 return None
-            
+
             cached = await redis.get(cache_key)
             if cached:
                 data = json.loads(cached)
                 return self._deserialize_search_result(data)
-            
+
             return None
         except Exception as e:
             logger.warning(f"Cache retrieval error: {e}")
             return None
-    
+
     async def _cache_results(
         self,
         cache_key: str,
@@ -231,7 +229,7 @@ class SemanticSearchService:
             redis = await get_redis()
             if redis is None:
                 return
-            
+
             data = self._serialize_search_result(result)
             await redis.setex(
                 cache_key,
@@ -240,7 +238,7 @@ class SemanticSearchService:
             )
         except Exception as e:
             logger.warning(f"Cache storage error: {e}")
-    
+
     def _serialize_search_result(
         self,
         result: SemanticSearchResult
@@ -254,7 +252,7 @@ class SemanticSearchService:
             "took_ms": result.took_ms,
             "facets": result.facets,
         }
-    
+
     def _deserialize_search_result(
         self,
         data: Dict[str, Any]
@@ -277,7 +275,7 @@ class SemanticSearchService:
                 similarity_score=r.get("similarity_score"),
                 relevance_score=r.get("relevance_score"),
             ))
-        
+
         return SemanticSearchResult(
             results=results,
             total_count=data["total_count"],
@@ -287,20 +285,20 @@ class SemanticSearchService:
             from_cache=True,
             facets=data.get("facets"),
         )
-    
+
     async def _track_popular_query(self, query: str):
         """Track query in popular searches."""
         try:
             redis = await get_redis()
             if redis is None:
                 return
-            
+
             normalized = query.lower().strip()
             await redis.zincrby(POPULAR_QUERIES_KEY, 1, normalized)
             await redis.expire(POPULAR_QUERIES_KEY, POPULAR_QUERIES_TTL)
         except Exception as e:
             logger.debug(f"Popular query tracking error: {e}")
-    
+
     async def _execute_semantic_search(
         self,
         embedding: List[float],
@@ -310,10 +308,10 @@ class SemanticSearchService:
         """Execute semantic search using pgvector."""
         # Convert embedding to PostgreSQL vector format
         embedding_str = "[" + ",".join(str(v) for v in embedding) + "]"
-        
+
         # Build the query using the stored procedure
         query = text("""
-            SELECT 
+            SELECT
                 product_id,
                 name,
                 slug,
@@ -337,7 +335,7 @@ class SemanticSearchService:
             )
             OFFSET :offset
         """)
-        
+
         params = {
             "embedding": embedding_str,
             "threshold": filters.similarity_threshold,
@@ -348,10 +346,10 @@ class SemanticSearchService:
             "in_stock": filters.in_stock_only,
             "offset": options.offset,
         }
-        
+
         result = await self.db.execute(query, params)
         rows = result.fetchall()
-        
+
         # Convert to ProductSearchResult objects
         products = []
         for row in rows:
@@ -370,7 +368,7 @@ class SemanticSearchService:
                 similarity_score=row.similarity_score,
                 relevance_score=None,
             ))
-        
+
         # Get total count (simplified - could be optimized)
         count_query = text("""
             SELECT COUNT(*) FROM products
@@ -382,12 +380,12 @@ class SemanticSearchService:
             AND (:max_price IS NULL OR price <= :max_price)
             AND (:in_stock = FALSE OR stock_quantity > 0)
         """)
-        
+
         count_result = await self.db.execute(count_query, params)
         total_count = count_result.scalar() or 0
-        
+
         return products, total_count
-    
+
     async def _execute_keyword_search(
         self,
         query: str,
@@ -397,7 +395,7 @@ class SemanticSearchService:
         """Execute fallback keyword search."""
         # Use the stored procedure for keyword search
         search_query = text("""
-            SELECT 
+            SELECT
                 product_id,
                 name,
                 slug,
@@ -420,7 +418,7 @@ class SemanticSearchService:
             )
             OFFSET :offset
         """)
-        
+
         params = {
             "query": query,
             "limit": options.max_results + options.offset,
@@ -430,10 +428,10 @@ class SemanticSearchService:
             "in_stock": filters.in_stock_only,
             "offset": options.offset,
         }
-        
+
         result = await self.db.execute(search_query, params)
         rows = result.fetchall()
-        
+
         products = []
         for row in rows:
             products.append(ProductSearchResult(
@@ -451,10 +449,10 @@ class SemanticSearchService:
                 similarity_score=None,
                 relevance_score=row.relevance_score,
             ))
-        
+
         # Simplified count for keyword search
         total_count = len(products)
-        
+
         return products, total_count
 
     async def _filter_by_branch_inventory(
@@ -493,7 +491,7 @@ class SemanticSearchService:
         visible_ids = {row[0] for row in result.fetchall()}
 
         return [p for p in products if str(p.product_id) in visible_ids]
-    
+
     async def search(
         self,
         query: str,
@@ -504,69 +502,69 @@ class SemanticSearchService:
     ) -> SemanticSearchResult:
         """
         Perform semantic product search.
-        
+
         Args:
             query: Search query (multilingual supported)
             filters: Optional search filters
             options: Optional search options
             user_id: Optional user ID for analytics
             session_id: Optional session ID for analytics
-            
+
         Returns:
             SemanticSearchResult with products and metadata
         """
         start_time = time.perf_counter()
-        
+
         # Validate query
         query = query.strip()
         if len(query) < MIN_QUERY_LENGTH:
             raise ValueError(f"Query must be at least {MIN_QUERY_LENGTH} characters")
         if len(query) > MAX_QUERY_LENGTH:
             raise ValueError(f"Query must be at most {MAX_QUERY_LENGTH} characters")
-        
+
         # Apply defaults
         filters = filters or SemanticSearchFilters()
         options = options or SemanticSearchOptions()
-        
+
         # Check cache
         cache_key = self._generate_cache_key(query, filters, options)
         cached_result = await self._get_cached_results(cache_key)
-        
+
         if cached_result:
             logger.info(f"Search cache hit for query: {query[:50]}...")
             if options.track_analytics:
                 await self._track_popular_query(query)
             return cached_result
-        
+
         # Try semantic search
         search_type = SearchType.SEMANTIC
         products = []
         total_count = 0
-        
+
         try:
             # Generate query embedding
             embedding_service = await self._get_embedding_service()
             embedding, was_cached = await embedding_service.generate_embedding(query)
-            
+
             logger.info(
                 f"Query embedding {'from cache' if was_cached else 'generated'} "
                 f"for: {query[:50]}..."
             )
-            
+
             # Execute semantic search
             products, total_count = await self._execute_semantic_search(
                 embedding, filters, options
             )
-            
+
         except (GeminiAPIError, CircuitOpenError) as e:
             # Fallback to keyword search
             logger.warning(f"Semantic search failed, using keyword fallback: {e}")
             search_type = SearchType.KEYWORD
-            
+
             products, total_count = await self._execute_keyword_search(
                 query, filters, options
             )
-        
+
         # Branch-inventory post-filter: drop results not visible in the branch
         if filters.branch_id is not None:
             products = await self._filter_by_branch_inventory(
@@ -587,10 +585,10 @@ class SemanticSearchService:
             from_cache=False,
             facets=None,  # Could add facet aggregation here
         )
-        
+
         # Cache results
         await self._cache_results(cache_key, result)
-        
+
         # Track analytics
         if options.track_analytics:
             await self._track_popular_query(query)
@@ -603,15 +601,15 @@ class SemanticSearchService:
                 session_id=session_id,
                 filters=filters,
             )
-        
+
         logger.info(
             f"Search completed: query='{query[:30]}...', "
             f"type={search_type.value}, results={len(products)}, "
             f"took={elapsed_ms}ms"
         )
-        
+
         return result
-    
+
     async def _log_search_analytics(
         self,
         query: str,
@@ -633,7 +631,7 @@ class SemanticSearchService:
                     :results_count, :search_type, :response_time_ms, :filters_used
                 )
             """)
-            
+
             await self.db.execute(analytics_query, {
                 "query": query,
                 "query_normalized": query.lower().strip(),
@@ -652,7 +650,7 @@ class SemanticSearchService:
             await self.db.commit()
         except Exception as e:
             logger.debug(f"Search analytics logging error: {e}")
-    
+
     async def get_popular_searches(
         self,
         limit: int = 10
@@ -662,20 +660,20 @@ class SemanticSearchService:
             redis = await get_redis()
             if redis is None:
                 return []
-            
+
             results = await redis.zrevrange(
                 POPULAR_QUERIES_KEY,
                 0,
                 limit - 1,
                 withscores=True
             )
-            
-            return [(query.decode() if isinstance(query, bytes) else query, int(score)) 
+
+            return [(query.decode() if isinstance(query, bytes) else query, int(score))
                     for query, score in results]
         except Exception as e:
             logger.warning(f"Error getting popular searches: {e}")
             return []
-    
+
     async def get_search_suggestions(
         self,
         partial_query: str,
@@ -684,15 +682,15 @@ class SemanticSearchService:
         """Get autocomplete suggestions based on popular searches."""
         if len(partial_query) < 2:
             return []
-        
+
         popular = await self.get_popular_searches(limit=50)
         partial_lower = partial_query.lower()
-        
+
         suggestions = [
             query for query, _ in popular
             if query.startswith(partial_lower) and query != partial_lower
         ]
-        
+
         return suggestions[:limit]
 
 

@@ -1,9 +1,10 @@
 """
 Category Service - Business Logic
 """
-from typing import Optional, List
+from typing import List, Optional
 from uuid import UUID
-from sqlalchemy import select, func
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.category import Category
@@ -12,7 +13,7 @@ from app.schemas.category import CategoryCreate, CategoryUpdate
 
 class CategoryService:
     """Service class for category operations."""
-    
+
     @staticmethod
     async def get_all(
         db: AsyncSession,
@@ -28,13 +29,13 @@ class CategoryService:
             .group_by(Category.category_id)
             .order_by(Category.name)
         )
-        
+
         if not include_inactive:
             query = query.where(Category.is_active == True)
-        
+
         result = await db.execute(query)
         categories = result.all()
-        
+
         return [
             {
                 **cat[0].__dict__,
@@ -42,7 +43,7 @@ class CategoryService:
             }
             for cat in categories
         ]
-    
+
     @staticmethod
     async def get_all_simple(
         db: AsyncSession,
@@ -50,22 +51,22 @@ class CategoryService:
     ) -> List[Category]:
         """Get all categories without product counts (simpler query)."""
         query = select(Category).order_by(Category.name)
-        
+
         if not include_inactive:
             query = query.where(Category.is_active == True)
-        
+
         result = await db.execute(query)
         return result.scalars().all()
-    
+
     @staticmethod
     async def get_hierarchical(db: AsyncSession) -> List[dict]:
         """Get categories in hierarchical structure (parent-child)."""
         categories = await CategoryService.get_all_simple(db)
-        
+
         # Build hierarchy
         category_map = {}
         root_categories = []
-        
+
         # First pass: create map with children array
         for cat in categories:
             category_map[str(cat.category_id)] = {
@@ -80,7 +81,7 @@ class CategoryService:
                 "product_count": 0,
                 "children": []
             }
-        
+
         # Second pass: build tree
         for cat in categories:
             cat_dict = category_map[str(cat.category_id)]
@@ -89,9 +90,9 @@ class CategoryService:
                 parent["children"].append(cat_dict)
             else:
                 root_categories.append(cat_dict)
-        
+
         return root_categories
-    
+
     @staticmethod
     async def get_by_id(db: AsyncSession, category_id: UUID) -> Optional[Category]:
         """Get category by ID."""
@@ -99,7 +100,7 @@ class CategoryService:
             select(Category).where(Category.category_id == category_id)
         )
         return result.scalar_one_or_none()
-    
+
     @staticmethod
     async def get_by_slug(db: AsyncSession, slug: str) -> Optional[Category]:
         """Get category by slug."""
@@ -107,10 +108,10 @@ class CategoryService:
             select(Category).where(Category.slug == slug)
         )
         return result.scalar_one_or_none()
-    
+
     @staticmethod
     async def get_by_id_or_slug(
-        db: AsyncSession, 
+        db: AsyncSession,
         identifier: str
     ) -> Optional[Category]:
         """Get category by ID or slug."""
@@ -122,10 +123,10 @@ class CategoryService:
                 return category
         except ValueError:
             pass
-        
+
         # Try slug
         return await CategoryService.get_by_slug(db, identifier)
-    
+
     @staticmethod
     async def create(
         db: AsyncSession,
@@ -140,13 +141,13 @@ class CategoryService:
             parent_category_id=data.parent_category_id,
             is_active=data.is_active
         )
-        
+
         db.add(category)
         await db.commit()
         await db.refresh(category)
-        
+
         return category
-    
+
     @staticmethod
     async def update(
         db: AsyncSession,
@@ -155,27 +156,27 @@ class CategoryService:
     ) -> Category:
         """Update an existing category."""
         update_data = data.model_dump(exclude_unset=True)
-        
+
         for field, value in update_data.items():
             setattr(category, field, value)
-        
+
         await db.commit()
         await db.refresh(category)
-        
+
         return category
-    
+
     @staticmethod
     async def delete(db: AsyncSession, category: Category) -> None:
         """Delete a category."""
         await db.delete(category)
         await db.commit()
-    
+
     @staticmethod
     async def has_products(db: AsyncSession, category_id: UUID) -> bool:
         """Check if category has any products."""
         # Import here to avoid circular imports
         from app.models.product import Product
-        
+
         result = await db.execute(
             select(func.count(Product.product_id))
             .where(Product.category_id == category_id)

@@ -1,11 +1,10 @@
 """
 Cart Pydantic Schemas
 """
-from pydantic import BaseModel, Field
-from typing import Optional, List
-from uuid import UUID
 from decimal import Decimal
+from typing import List, Optional
 
+from pydantic import BaseModel, Field
 
 # ============================================================================
 # Cart Item Schemas
@@ -15,7 +14,7 @@ class CartItemBase(BaseModel):
     """Base cart item schema."""
     product_id: str
     quantity: int = Field(..., ge=1)
-    
+
 
 class AddToCartRequest(CartItemBase):
     """Request to add item to cart."""

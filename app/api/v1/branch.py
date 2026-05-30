@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.config.redis import get_redis, get_redis_optional
 from app.config.settings import settings
-from app.utils.logger import logger
 from app.core.dependencies import get_current_user, get_current_user_optional
 from app.core.exceptions import NotFoundError
 from app.schemas.branch import (
@@ -26,6 +25,7 @@ from app.schemas.branch import (
     LocationResolveRequest,
 )
 from app.services import branch_service
+from app.utils.logger import logger
 
 router = APIRouter()
 

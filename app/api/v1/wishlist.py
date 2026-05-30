@@ -1,17 +1,18 @@
 """
 Wishlist API Endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
-from decimal import Decimal
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
 from app.core.dependencies import get_current_user
-from app.services.wishlist_service import WishlistService
 from app.schemas.cart import WishlistItemAdd
+from app.services.wishlist_service import WishlistService
 
 router = APIRouter(prefix="/wishlist", tags=["Wishlist"])
 
@@ -30,7 +31,7 @@ def format_wishlist_item(item) -> dict:
         "price_at_watch": float(item.price_at_watch) if item.price_at_watch else None,
         "added_at": item.added_at.isoformat() if item.added_at else None,
     }
-    
+
     # Add product info if available
     if item.product:
         data["product"] = {
@@ -43,14 +44,14 @@ def format_wishlist_item(item) -> dict:
                 for img in (item.product.images or [])[:1]  # Just primary image
             ]
         }
-    
+
     # Add variant info if available
     if item.variant:
         data["variant_name"] = item.variant.name
         data["variant_sku"] = item.variant.sku
         data["current_price"] = float(item.variant.price) if item.variant.price else None
         data["variant_image"] = item.variant.image_url
-        
+
         # Calculate price drop
         if item.price_at_watch and item.variant.price:
             price_drop = float(item.price_at_watch) - float(item.variant.price)
@@ -64,7 +65,7 @@ def format_wishlist_item(item) -> dict:
         else:
             data["price_drop"] = 0
             data["price_drop_percentage"] = 0
-    
+
     return data
 
 
@@ -82,7 +83,7 @@ async def get_wishlist(
     """
     try:
         items = await WishlistService.get_by_user_id(db, current_user.user_id)
-        
+
         return {
             "success": True,
             "data": {
@@ -111,7 +112,7 @@ async def add_to_wishlist(
         product_uuid = UUID(data.product_id)
         variant_uuid = UUID(data.variant_id) if data.variant_id else None
         price = Decimal(str(data.price_at_watch)) if data.price_at_watch else None
-        
+
         item = await WishlistService.add_item(
             db,
             user_id=current_user.user_id,
@@ -119,7 +120,7 @@ async def add_to_wishlist(
             variant_id=variant_uuid,
             price_at_watch=price
         )
-        
+
         return {
             "success": True,
             "data": {
@@ -156,20 +157,20 @@ async def remove_from_wishlist(
     try:
         product_uuid = UUID(product_id)
         variant_uuid = UUID(variant_id) if variant_id else None
-        
+
         removed = await WishlistService.remove_item(
             db,
             user_id=current_user.user_id,
             product_id=product_uuid,
             variant_id=variant_uuid
         )
-        
+
         if not removed:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Item not found in wishlist"
             )
-        
+
         return {
             "success": True,
             "data": {
@@ -207,14 +208,14 @@ async def toggle_wishlist(
     try:
         product_uuid = UUID(product_id)
         variant_uuid = UUID(variant_id) if variant_id else None
-        
+
         exists = await WishlistService.exists(
             db,
             user_id=current_user.user_id,
             product_id=product_uuid,
             variant_id=variant_uuid
         )
-        
+
         if exists:
             await WishlistService.remove_item(
                 db,
@@ -274,14 +275,14 @@ async def check_wishlist(
     try:
         product_uuid = UUID(product_id)
         variant_uuid = UUID(variant_id) if variant_id else None
-        
+
         exists = await WishlistService.exists(
             db,
             user_id=current_user.user_id,
             product_id=product_uuid,
             variant_id=variant_uuid
         )
-        
+
         return {
             "success": True,
             "data": {
@@ -317,7 +318,7 @@ async def get_price_drops(
             user_id=current_user.user_id,
             min_drop_amount=Decimal(str(min_drop))
         )
-        
+
         return {
             "success": True,
             "data": {
@@ -343,7 +344,7 @@ async def clear_wishlist(
     """
     try:
         await WishlistService.clear_wishlist(db, current_user.user_id)
-        
+
         return {
             "success": True,
             "message": "Wishlist cleared successfully"

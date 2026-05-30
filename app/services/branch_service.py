@@ -13,7 +13,7 @@ from typing import Optional
 from uuid import UUID
 
 from redis.asyncio import Redis
-from sqlalchemy import delete, distinct, func, select, update
+from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -26,7 +26,6 @@ from app.core.exceptions import (
 from app.models.branch import Branch, PostOfficeBranchMapping
 from app.models.user import Address
 from app.utils.logger import logger
-
 
 # ============================================================================
 # Hierarchical Location Discovery  (for cascading dropdowns)

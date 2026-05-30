@@ -1,12 +1,11 @@
 """
 Notification Pydantic Schemas
 """
-from pydantic import BaseModel, Field
-from typing import Optional, List, Any
-from uuid import UUID
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 
+from pydantic import BaseModel, Field
 
 # ============================================================================
 # Enums
@@ -69,7 +68,7 @@ class NotificationResponse(BaseModel):
     is_read: bool
     read_at: Optional[datetime] = None
     created_at: datetime
-    
+
     model_config = {"from_attributes": True}
 
 
@@ -92,5 +91,5 @@ class PushTokenResponse(BaseModel):
     device_type: Optional[str] = None
     is_active: bool
     created_at: datetime
-    
+
     model_config = {"from_attributes": True}

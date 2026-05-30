@@ -3,12 +3,9 @@ Cart Service - Redis-based Cart Management
 """
 import json
 import time
-from typing import Optional, Dict, Any
-from decimal import Decimal
-from loguru import logger
+from typing import Any, Dict, Optional
 
-from app.config.redis import get_redis_client, RedisKeys
-
+from app.config.redis import RedisKeys, get_redis_client
 
 # Constants
 CART_TTL = 30 * 24 * 60 * 60  # 30 days in seconds
@@ -27,17 +24,17 @@ def _get_redis():
 
 class CartService:
     """Redis-based cart service."""
-    
+
     @staticmethod
     def _get_cart_key(user_id: str) -> str:
         """Get Redis key for user's cart."""
         return RedisKeys.cart(user_id)
-    
+
     @staticmethod
     def _calculate_totals(items: list, coupon: Optional[Dict] = None) -> Dict[str, float]:
         """Calculate cart totals."""
         subtotal = sum(item["price"] * item["quantity"] for item in items)
-        
+
         # Calculate discount
         discount = 0.0
         if coupon:
@@ -45,17 +42,17 @@ class CartService:
                 discount = subtotal * (coupon["discount_value"] / 100)
             else:  # fixed
                 discount = min(coupon["discount_value"], subtotal)
-        
+
         # Calculate tax (on discounted amount)
         taxable_amount = subtotal - discount
         tax = taxable_amount * TAX_RATE
-        
+
         # Calculate shipping
         shipping = 0.0 if taxable_amount >= FREE_SHIPPING_THRESHOLD else SHIPPING_COST
-        
+
         # Total
         total = taxable_amount + tax + shipping
-        
+
         return {
             "subtotal": round(subtotal, 2),
             "discount": round(discount, 2),
@@ -63,14 +60,14 @@ class CartService:
             "shipping": round(shipping, 2),
             "total": round(total, 2)
         }
-    
+
     @staticmethod
     async def get_cart(user_id: str) -> Dict[str, Any]:
         """Get user's cart."""
         cart_key = CartService._get_cart_key(user_id)
         redis = _get_redis()
         cart_data = await redis.get(cart_key)
-        
+
         if not cart_data:
             # Return empty cart
             return {
@@ -85,7 +82,7 @@ class CartService:
                 "coupon": None,
                 "updated_at": int(time.time())
             }
-        
+
         cart = json.loads(cart_data)
         # Recalculate totals
         cart["totals"] = CartService._calculate_totals(
@@ -93,7 +90,7 @@ class CartService:
             cart.get("coupon")
         )
         return cart
-    
+
     @staticmethod
     async def _save_cart(user_id: str, cart: Dict[str, Any]) -> None:
         """Save cart to Redis."""
@@ -101,7 +98,7 @@ class CartService:
         cart["updated_at"] = int(time.time())
         redis = _get_redis()
         await redis.setex(cart_key, CART_TTL, json.dumps(cart))
-    
+
     @staticmethod
     async def add_item(
         user_id: str,
@@ -115,7 +112,7 @@ class CartService:
     ) -> Dict[str, Any]:
         """Add item to cart."""
         cart = await CartService.get_cart(user_id)
-        
+
         # Check if item already exists
         existing_index = None
         for i, item in enumerate(cart["items"]):
@@ -123,7 +120,7 @@ class CartService:
             if item["product_id"] == product_id and item_variant == variant_id:
                 existing_index = i
                 break
-        
+
         if existing_index is not None:
             # Update quantity
             cart["items"][existing_index]["quantity"] += quantity
@@ -138,16 +135,16 @@ class CartService:
                 "sku": sku,
                 "variant_id": variant_id
             })
-        
+
         # Recalculate totals
         cart["totals"] = CartService._calculate_totals(
             cart["items"],
             cart.get("coupon")
         )
-        
+
         await CartService._save_cart(user_id, cart)
         return cart
-    
+
     @staticmethod
     async def update_item_quantity(
         user_id: str,
@@ -157,7 +154,7 @@ class CartService:
     ) -> Dict[str, Any]:
         """Update item quantity in cart."""
         cart = await CartService.get_cart(user_id)
-        
+
         # Find item
         item_index = None
         for i, item in enumerate(cart["items"]):
@@ -165,26 +162,26 @@ class CartService:
             if item["product_id"] == product_id and item_variant == variant_id:
                 item_index = i
                 break
-        
+
         if item_index is None:
             raise ValueError("Item not found in cart")
-        
+
         if quantity <= 0:
             # Remove item
             cart["items"].pop(item_index)
         else:
             # Update quantity
             cart["items"][item_index]["quantity"] = quantity
-        
+
         # Recalculate totals
         cart["totals"] = CartService._calculate_totals(
             cart["items"],
             cart.get("coupon")
         )
-        
+
         await CartService._save_cart(user_id, cart)
         return cart
-    
+
     @staticmethod
     async def remove_item(
         user_id: str,
@@ -193,29 +190,29 @@ class CartService:
     ) -> Dict[str, Any]:
         """Remove item from cart."""
         cart = await CartService.get_cart(user_id)
-        
+
         # Filter out the item
         cart["items"] = [
             item for item in cart["items"]
             if not (item["product_id"] == product_id and item.get("variant_id") == variant_id)
         ]
-        
+
         # Recalculate totals
         cart["totals"] = CartService._calculate_totals(
             cart["items"],
             cart.get("coupon")
         )
-        
+
         await CartService._save_cart(user_id, cart)
         return cart
-    
+
     @staticmethod
     async def clear_cart(user_id: str) -> None:
         """Clear entire cart."""
         cart_key = CartService._get_cart_key(user_id)
         redis = _get_redis()
         await redis.delete(cart_key)
-    
+
     @staticmethod
     async def apply_coupon(
         user_id: str,
@@ -225,66 +222,66 @@ class CartService:
     ) -> Dict[str, Any]:
         """Apply coupon to cart."""
         cart = await CartService.get_cart(user_id)
-        
+
         # Calculate discount amount
         subtotal = sum(item["price"] * item["quantity"] for item in cart["items"])
         if discount_type == "percentage":
             discount_amount = subtotal * (discount_value / 100)
         else:
             discount_amount = min(discount_value, subtotal)
-        
+
         cart["coupon"] = {
             "code": code,
             "discount_type": discount_type,
             "discount_value": discount_value,
             "discount_amount": round(discount_amount, 2)
         }
-        
+
         # Recalculate totals
         cart["totals"] = CartService._calculate_totals(
             cart["items"],
             cart["coupon"]
         )
-        
+
         await CartService._save_cart(user_id, cart)
         return cart
-    
+
     @staticmethod
     async def remove_coupon(user_id: str) -> Dict[str, Any]:
         """Remove coupon from cart."""
         cart = await CartService.get_cart(user_id)
         cart["coupon"] = None
-        
+
         # Recalculate totals
         cart["totals"] = CartService._calculate_totals(cart["items"], None)
-        
+
         await CartService._save_cart(user_id, cart)
         return cart
-    
+
     @staticmethod
     async def get_item_count(user_id: str) -> int:
         """Get total number of items in cart."""
         cart = await CartService.get_cart(user_id)
         return sum(item["quantity"] for item in cart["items"])
-    
+
     @staticmethod
     async def merge_cart(user_id: str, guest_items: list) -> Dict[str, Any]:
         """
         Merge guest cart items with user cart.
-        
+
         Used when a guest logs in - combines their cart with any existing user cart.
         """
         cart = await CartService.get_cart(user_id)
-        
+
         for guest_item in guest_items:
             # Check if item already exists
             existing_index = None
             for i, item in enumerate(cart["items"]):
-                if (item["product_id"] == guest_item.get("product_id") and 
+                if (item["product_id"] == guest_item.get("product_id") and
                     item.get("variant_id") == guest_item.get("variant_id")):
                     existing_index = i
                     break
-            
+
             if existing_index is not None:
                 # Add quantities
                 cart["items"][existing_index]["quantity"] += guest_item.get("quantity", 1)
@@ -299,28 +296,28 @@ class CartService:
                     "sku": guest_item.get("sku"),
                     "variant_id": guest_item.get("variant_id")
                 })
-        
+
         # Recalculate totals
         cart["totals"] = CartService._calculate_totals(
             cart["items"],
             cart.get("coupon")
         )
-        
+
         await CartService._save_cart(user_id, cart)
         return cart
-    
+
     @staticmethod
     async def sync_cart(user_id: str, local_cart: dict) -> Dict[str, Any]:
         """
         Sync local cart with server cart.
-        
+
         Uses timestamps to determine which version is newer.
         For offline-first mobile support.
         """
         server_cart = await CartService.get_cart(user_id)
         local_updated = local_cart.get("updated_at", 0)
         server_updated = server_cart.get("updated_at", 0)
-        
+
         if local_updated > server_updated:
             # Local cart is newer - replace server cart
             server_cart["items"] = local_cart.get("items", [])
@@ -337,12 +334,12 @@ class CartService:
                 )
                 if not exists:
                     server_cart["items"].append(local_item)
-        
+
         # Recalculate totals
         server_cart["totals"] = CartService._calculate_totals(
             server_cart["items"],
             server_cart.get("coupon")
         )
-        
+
         await CartService._save_cart(user_id, server_cart)
         return server_cart

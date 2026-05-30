@@ -4,15 +4,16 @@ SRIBEESonline - Audit Logging Service
 Comprehensive audit trail for security-sensitive operations.
 Logs user actions, admin operations, and system events.
 """
-from typing import Optional, Dict, Any, List
-from uuid import UUID, uuid4
 from datetime import datetime, timedelta
 from enum import Enum
+from typing import Any, Dict, List, Optional
+from uuid import UUID, uuid4
 
-from sqlalchemy import Column, String, DateTime, Text, Index, select, and_
-from sqlalchemy.dialects.postgresql import UUID as PGUUID, JSONB
-from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
+from sqlalchemy import Column, DateTime, Index, String, Text, and_, select
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import Base
 
@@ -26,14 +27,14 @@ class AuditAction(str, Enum):
     PASSWORD_CHANGE = "auth.password_change"
     PASSWORD_RESET = "auth.password_reset"
     TOKEN_REFRESH = "auth.token_refresh"
-    
+
     # User Management
     USER_CREATE = "user.create"
     USER_UPDATE = "user.update"
     USER_DELETE = "user.delete"
     USER_SUSPEND = "user.suspend"
     USER_ACTIVATE = "user.activate"
-    
+
     # Admin Operations
     ADMIN_LOGIN = "admin.login"
     ADMIN_LOGIN_FAILED = "admin.login_failed"
@@ -41,33 +42,33 @@ class AuditAction(str, Enum):
     ADMIN_UPDATE = "admin.update"
     ADMIN_DELETE = "admin.delete"
     ADMIN_PERMISSION_CHANGE = "admin.permission_change"
-    
+
     # Orders
     ORDER_CREATE = "order.create"
     ORDER_UPDATE = "order.update"
     ORDER_CANCEL = "order.cancel"
     ORDER_REFUND = "order.refund"
     ORDER_STATUS_CHANGE = "order.status_change"
-    
+
     # Products
     PRODUCT_CREATE = "product.create"
     PRODUCT_UPDATE = "product.update"
     PRODUCT_DELETE = "product.delete"
     PRODUCT_PRICE_CHANGE = "product.price_change"
     PRODUCT_STOCK_CHANGE = "product.stock_change"
-    
+
     # Payments
     PAYMENT_INITIATE = "payment.initiate"
     PAYMENT_SUCCESS = "payment.success"
     PAYMENT_FAILED = "payment.failed"
     PAYMENT_REFUND = "payment.refund"
-    
+
     # Security Events
     SECURITY_RATE_LIMIT = "security.rate_limit"
     SECURITY_INVALID_TOKEN = "security.invalid_token"
     SECURITY_PERMISSION_DENIED = "security.permission_denied"
     SECURITY_SUSPICIOUS_ACTIVITY = "security.suspicious_activity"
-    
+
     # System
     SYSTEM_CONFIG_CHANGE = "system.config_change"
     SYSTEM_BACKUP = "system.backup"
@@ -84,38 +85,38 @@ class AuditSeverity(str, Enum):
 
 class AuditLog(Base):
     """Audit log database model."""
-    
+
     __tablename__ = "audit_logs"
-    
+
     id = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
-    
+
     # Timestamp
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    
+
     # Action info
     action = Column(String(100), nullable=False, index=True)
     severity = Column(String(20), default="info", nullable=False)
-    
+
     # Actor (who performed the action)
     actor_type = Column(String(20), nullable=False)  # user, admin, system
     actor_id = Column(PGUUID(as_uuid=True), nullable=True, index=True)
     actor_email = Column(String(255), nullable=True)
     actor_ip = Column(String(45), nullable=True)  # IPv6 max length
     actor_user_agent = Column(String(500), nullable=True)
-    
+
     # Target (what was affected)
     target_type = Column(String(50), nullable=True)  # user, order, product, etc.
     target_id = Column(PGUUID(as_uuid=True), nullable=True, index=True)
-    
+
     # Details
     description = Column(Text, nullable=True)
     metadata = Column(JSONB, nullable=True)  # Additional context
-    
+
     # Request context
     request_id = Column(String(36), nullable=True)
     endpoint = Column(String(255), nullable=True)
     method = Column(String(10), nullable=True)
-    
+
     # Indexes for common queries
     __table_args__ = (
         Index("ix_audit_logs_action_created", "action", "created_at"),
@@ -126,7 +127,7 @@ class AuditLog(Base):
 
 class AuditService:
     """Service for audit logging operations."""
-    
+
     @staticmethod
     async def log(
         db: AsyncSession,
@@ -147,7 +148,7 @@ class AuditService:
     ) -> AuditLog:
         """
         Create an audit log entry.
-        
+
         Args:
             db: Database session
             action: The action being logged
@@ -164,7 +165,7 @@ class AuditService:
             request_id: Request correlation ID
             endpoint: API endpoint
             method: HTTP method
-        
+
         Returns:
             Created AuditLog entry
         """
@@ -176,7 +177,7 @@ class AuditService:
             }
         else:
             sanitized_metadata = None
-        
+
         audit_log = AuditLog(
             action=action.value,
             severity=severity.value,
@@ -193,11 +194,11 @@ class AuditService:
             endpoint=endpoint,
             method=method,
         )
-        
+
         db.add(audit_log)
         await db.commit()
         await db.refresh(audit_log)
-        
+
         # Also log to application logger for immediate visibility
         log_msg = f"AUDIT: {action.value} | actor={actor_type}:{actor_id} | target={target_type}:{target_id}"
         if severity == AuditSeverity.CRITICAL:
@@ -208,9 +209,9 @@ class AuditService:
             logger.warning(log_msg)
         else:
             logger.info(log_msg)
-        
+
         return audit_log
-    
+
     @staticmethod
     async def log_auth_event(
         db: AsyncSession,
@@ -225,11 +226,11 @@ class AuditService:
         """Log authentication events."""
         severity = AuditSeverity.INFO if success else AuditSeverity.WARNING
         description = f"{'Successful' if success else 'Failed'} {action.value.split('.')[-1]} for {email}"
-        
+
         metadata = {"success": success}
         if failure_reason:
             metadata["failure_reason"] = failure_reason
-        
+
         return await AuditService.log(
             db=db,
             action=action,
@@ -242,7 +243,7 @@ class AuditService:
             metadata=metadata,
             severity=severity,
         )
-    
+
     @staticmethod
     async def log_admin_action(
         db: AsyncSession,
@@ -260,7 +261,7 @@ class AuditService:
         if changes:
             # Log before/after for changes
             metadata["changes"] = changes
-        
+
         return await AuditService.log(
             db=db,
             action=action,
@@ -274,7 +275,7 @@ class AuditService:
             metadata=metadata,
             severity=AuditSeverity.INFO,
         )
-    
+
     @staticmethod
     async def log_security_event(
         db: AsyncSession,
@@ -295,7 +296,7 @@ class AuditService:
             metadata=metadata,
             severity=AuditSeverity.WARNING,
         )
-    
+
     @staticmethod
     async def get_logs(
         db: AsyncSession,
@@ -311,9 +312,9 @@ class AuditService:
     ) -> List[AuditLog]:
         """Query audit logs with filters."""
         query = select(AuditLog)
-        
+
         conditions = []
-        
+
         if action:
             conditions.append(AuditLog.action == action.value)
         if actor_id:
@@ -328,16 +329,16 @@ class AuditService:
             conditions.append(AuditLog.created_at >= start_date)
         if end_date:
             conditions.append(AuditLog.created_at <= end_date)
-        
+
         if conditions:
             query = query.where(and_(*conditions))
-        
+
         query = query.order_by(AuditLog.created_at.desc())
         query = query.limit(limit).offset(offset)
-        
+
         result = await db.execute(query)
         return result.scalars().all()
-    
+
     @staticmethod
     async def get_user_activity(
         db: AsyncSession,
@@ -347,17 +348,17 @@ class AuditService:
     ) -> List[AuditLog]:
         """Get recent activity for a specific user."""
         start_date = datetime.utcnow() - timedelta(days=days)
-        
+
         query = select(AuditLog).where(
             and_(
                 AuditLog.actor_id == user_id,
                 AuditLog.created_at >= start_date,
             )
         ).order_by(AuditLog.created_at.desc()).limit(limit)
-        
+
         result = await db.execute(query)
         return result.scalars().all()
-    
+
     @staticmethod
     async def get_security_events(
         db: AsyncSession,
@@ -366,7 +367,7 @@ class AuditService:
     ) -> List[AuditLog]:
         """Get recent security events."""
         start_date = datetime.utcnow() - timedelta(hours=hours)
-        
+
         security_actions = [
             AuditAction.LOGIN_FAILED.value,
             AuditAction.ADMIN_LOGIN_FAILED.value,
@@ -375,13 +376,13 @@ class AuditService:
             AuditAction.SECURITY_PERMISSION_DENIED.value,
             AuditAction.SECURITY_SUSPICIOUS_ACTIVITY.value,
         ]
-        
+
         query = select(AuditLog).where(
             and_(
                 AuditLog.action.in_(security_actions),
                 AuditLog.created_at >= start_date,
             )
         ).order_by(AuditLog.created_at.desc()).limit(limit)
-        
+
         result = await db.execute(query)
         return result.scalars().all()

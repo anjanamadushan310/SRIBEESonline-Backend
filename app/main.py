@@ -12,16 +12,16 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sentry_sdk.integrations.fastapi import FastApiIntegration
-from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.redis import RedisIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
 from app.api.v1.router import router as v1_router
 from app.config.database import close_db, init_db
 from app.config.redis import close_redis, init_redis
 from app.config.settings import settings
 from app.core.exceptions import AppException
-from app.utils.logger import logger
 from app.services.fcm_service import FCMService
+from app.utils.logger import logger
 
 
 def init_sentry() -> None:
@@ -30,7 +30,7 @@ def init_sentry() -> None:
         sentry_sdk.init(
             dsn=settings.sentry_dsn,
             environment=settings.app_env,
-            release=f"sribeesonline-api@1.0.0",
+            release="sribeesonline-api@1.0.0",
             traces_sample_rate=settings.sentry_traces_sample_rate,
             profiles_sample_rate=settings.sentry_profiles_sample_rate,
             integrations=[
@@ -60,41 +60,41 @@ def init_fcm() -> None:
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     """
     Application lifespan manager.
-    
+
     Handles startup and shutdown events.
     """
     # Startup
     logger.info(f"Starting {settings.app_name} v{settings.api_version}")
     logger.info(f"Environment: {settings.app_env}")
-    
+
     try:
         # Initialize Sentry error tracking
         init_sentry()
-        
+
         # Initialize Firebase Cloud Messaging
         init_fcm()
-        
+
         # Initialize database connection
         await init_db()
-        
+
         # Initialize Redis connection
         await init_redis()
-        
+
         logger.info("Application startup complete")
-        
+
     except Exception as e:
         logger.error(f"Startup failed: {e}")
         sentry_sdk.capture_exception(e)
         raise
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down application...")
-    
+
     await close_redis()
     await close_db()
-    
+
     logger.info("Application shutdown complete")
 
 
@@ -124,8 +124,8 @@ app.add_middleware(
 )
 
 # Security middleware (headers, request ID, rate limiting)
-from app.core.security_headers import configure_security_middleware
 from app.core.rate_limiter import RateLimitMiddleware
+from app.core.security_headers import configure_security_middleware
 
 configure_security_middleware(app)
 app.add_middleware(RateLimitMiddleware)
@@ -242,7 +242,7 @@ app.include_router(v1_router, prefix="/api")
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     uvicorn.run(
         "app.main:app",
         host=settings.host,

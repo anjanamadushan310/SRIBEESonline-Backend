@@ -81,19 +81,6 @@ addopts = "-v --cov=app --cov-report=html --cov-report=term-missing"
 [tool.ruff]
 line-length = 88
 target-version = "py311"
-select = [
-    "E",  # pycodestyle errors
-    "W",  # pycodestyle warnings
-    "F",  # pyflakes
-    "I",  # isort
-    "C",  # flake8-comprehensions
-    "B",  # flake8-bugbear
-]
-ignore = [
-    "E501",  # line too long, handled by black
-    "B008",  # do not perform function calls in argument defaults
-    "C901",  # too complex
-]
 exclude = [
     ".bzr",
     ".direnv",
@@ -115,4 +102,22 @@ exclude = [
     "node_modules",
     "venv",
     "alembic",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "C",  # flake8-comprehensions
+    "B",  # flake8-bugbear
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "E402",  # module level import not at top (intentional for middleware setup)
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+    "E712",  # SQLAlchemy requires == True/False for column comparisons
+    "B904",  # raise-from inside except (low-risk style preference)
 ]

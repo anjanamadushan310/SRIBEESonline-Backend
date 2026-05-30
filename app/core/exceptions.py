@@ -11,10 +11,10 @@ from fastapi import HTTPException, status
 class AppException(HTTPException):
     """
     Base application exception.
-    
+
     Extends HTTPException with additional context.
     """
-    
+
     def __init__(
         self,
         status_code: int,
@@ -25,7 +25,7 @@ class AppException(HTTPException):
         self.message = message
         self.error_code = error_code
         self.details = details or {}
-        
+
         detail = {
             "success": False,
             "error": {
@@ -34,7 +34,7 @@ class AppException(HTTPException):
                 **self.details,
             }
         }
-        
+
         super().__init__(status_code=status_code, detail=detail)
 
 
@@ -44,7 +44,7 @@ class AppException(HTTPException):
 
 class AuthenticationError(AppException):
     """Raised when authentication fails."""
-    
+
     def __init__(
         self,
         message: str = "Authentication failed",
@@ -61,7 +61,7 @@ class AuthenticationError(AppException):
 
 class InvalidCredentialsError(AuthenticationError):
     """Raised when login credentials are invalid."""
-    
+
     def __init__(self, message: str = "Invalid email or password"):
         super().__init__(
             message=message,
@@ -71,7 +71,7 @@ class InvalidCredentialsError(AuthenticationError):
 
 class TokenExpiredError(AuthenticationError):
     """Raised when JWT token has expired."""
-    
+
     def __init__(self, message: str = "Token has expired"):
         super().__init__(
             message=message,
@@ -81,7 +81,7 @@ class TokenExpiredError(AuthenticationError):
 
 class InvalidTokenError(AuthenticationError):
     """Raised when JWT token is invalid."""
-    
+
     def __init__(self, message: str = "Invalid token"):
         super().__init__(
             message=message,
@@ -91,7 +91,7 @@ class InvalidTokenError(AuthenticationError):
 
 class UnverifiedEmailError(AppException):
     """Raised when user's email is not verified."""
-    
+
     def __init__(self, message: str = "Please verify your email address before logging in"):
         super().__init__(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -106,7 +106,7 @@ class UnverifiedEmailError(AppException):
 
 class AuthorizationError(AppException):
     """Raised when user lacks permission for an action."""
-    
+
     def __init__(
         self,
         message: str = "You don't have permission to perform this action",
@@ -123,7 +123,7 @@ class AuthorizationError(AppException):
 
 class InsufficientPermissionsError(AuthorizationError):
     """Raised when user doesn't have required role/permission."""
-    
+
     def __init__(
         self,
         required_roles: Optional[list] = None,
@@ -132,7 +132,7 @@ class InsufficientPermissionsError(AuthorizationError):
         details = {}
         if required_roles:
             details["required_roles"] = required_roles
-            
+
         super().__init__(
             message=message,
             error_code="INSUFFICIENT_PERMISSIONS",
@@ -142,7 +142,7 @@ class InsufficientPermissionsError(AuthorizationError):
 
 class BranchAccessDeniedError(AuthorizationError):
     """Raised when admin tries to access resources outside their branch."""
-    
+
     def __init__(self, message: str = "Access denied for this branch"):
         super().__init__(
             message=message,
@@ -156,7 +156,7 @@ class BranchAccessDeniedError(AuthorizationError):
 
 class NotFoundError(AppException):
     """Raised when a requested resource is not found."""
-    
+
     def __init__(
         self,
         resource: str = "Resource",
@@ -168,7 +168,7 @@ class NotFoundError(AppException):
                 message = f"{resource} with ID '{identifier}' not found"
             else:
                 message = f"{resource} not found"
-                
+
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
             message=message,
@@ -179,35 +179,35 @@ class NotFoundError(AppException):
 
 class UserNotFoundError(NotFoundError):
     """Raised when a user is not found."""
-    
+
     def __init__(self, identifier: Optional[str] = None):
         super().__init__(resource="User", identifier=identifier)
 
 
 class ProductNotFoundError(NotFoundError):
     """Raised when a product is not found."""
-    
+
     def __init__(self, identifier: Optional[str] = None):
         super().__init__(resource="Product", identifier=identifier)
 
 
 class OrderNotFoundError(NotFoundError):
     """Raised when an order is not found."""
-    
+
     def __init__(self, identifier: Optional[str] = None):
         super().__init__(resource="Order", identifier=identifier)
 
 
 class CategoryNotFoundError(NotFoundError):
     """Raised when a category is not found."""
-    
+
     def __init__(self, identifier: Optional[str] = None):
         super().__init__(resource="Category", identifier=identifier)
 
 
 class LocationNotServedError(AppException):
     """Raised when a valid location is not yet mapped to any active branch."""
-    
+
     def __init__(
         self,
         post_office: Optional[str] = None,
@@ -216,7 +216,7 @@ class LocationNotServedError(AppException):
     ):
         parts = [v for v in (post_office, district, province) if v]
         location_label = ", ".join(parts) if parts else "selected location"
-        
+
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
             message=(
@@ -242,7 +242,7 @@ BranchNotServedError = LocationNotServedError
 
 class ValidationError(AppException):
     """Raised when input validation fails."""
-    
+
     def __init__(
         self,
         message: str = "Validation error",
@@ -258,7 +258,7 @@ class ValidationError(AppException):
 
 class DuplicateError(AppException):
     """Raised when attempting to create a duplicate resource."""
-    
+
     def __init__(
         self,
         field: str = "resource",
@@ -266,7 +266,7 @@ class DuplicateError(AppException):
     ):
         if message is None:
             message = f"A record with this {field} already exists"
-            
+
         super().__init__(
             status_code=status.HTTP_400_BAD_REQUEST,
             message=message,
@@ -277,7 +277,7 @@ class DuplicateError(AppException):
 
 class EmailAlreadyExistsError(DuplicateError):
     """Raised when email is already registered."""
-    
+
     def __init__(self):
         super().__init__(
             field="email",
@@ -291,7 +291,7 @@ class EmailAlreadyExistsError(DuplicateError):
 
 class BusinessError(AppException):
     """Raised for business logic violations."""
-    
+
     def __init__(
         self,
         message: str,
@@ -308,7 +308,7 @@ class BusinessError(AppException):
 
 class InsufficientStockError(BusinessError):
     """Raised when product stock is insufficient."""
-    
+
     def __init__(
         self,
         product_name: str,
@@ -328,7 +328,7 @@ class InsufficientStockError(BusinessError):
 
 class OrderCancellationError(BusinessError):
     """Raised when order cannot be cancelled."""
-    
+
     def __init__(self, reason: str = "Order cannot be cancelled"):
         super().__init__(
             message=reason,
@@ -338,7 +338,7 @@ class OrderCancellationError(BusinessError):
 
 class PaymentError(BusinessError):
     """Raised when payment processing fails."""
-    
+
     def __init__(
         self,
         message: str = "Payment processing failed",
@@ -347,7 +347,7 @@ class PaymentError(BusinessError):
         details = {}
         if provider_error:
             details["provider_error"] = provider_error
-            
+
         super().__init__(
             message=message,
             error_code="PAYMENT_FAILED",
@@ -357,7 +357,7 @@ class PaymentError(BusinessError):
 
 class InvalidCouponError(BusinessError):
     """Raised when coupon is invalid or expired."""
-    
+
     def __init__(self, message: str = "Invalid or expired coupon"):
         super().__init__(
             message=message,
@@ -371,7 +371,7 @@ class InvalidCouponError(BusinessError):
 
 class RateLimitExceededError(AppException):
     """Raised when rate limit is exceeded."""
-    
+
     def __init__(
         self,
         message: str = "Too many requests. Please try again later.",
@@ -380,7 +380,7 @@ class RateLimitExceededError(AppException):
         details = {}
         if retry_after:
             details["retry_after"] = retry_after
-            
+
         super().__init__(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             message=message,
@@ -395,7 +395,7 @@ class RateLimitExceededError(AppException):
 
 class InternalServerError(AppException):
     """Raised for unexpected server errors."""
-    
+
     def __init__(
         self,
         message: str = "An unexpected error occurred",
@@ -411,7 +411,7 @@ class InternalServerError(AppException):
 
 class ServiceUnavailableError(AppException):
     """Raised when a required service is unavailable."""
-    
+
     def __init__(
         self,
         service: str = "Service",
@@ -419,7 +419,7 @@ class ServiceUnavailableError(AppException):
     ):
         if message is None:
             message = f"{service} is temporarily unavailable"
-            
+
         super().__init__(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             message=message,
@@ -430,13 +430,13 @@ class ServiceUnavailableError(AppException):
 
 class DatabaseError(ServiceUnavailableError):
     """Raised when database operation fails."""
-    
+
     def __init__(self, message: str = "Database error occurred"):
         super().__init__(service="Database", message=message)
 
 
 class RedisError(ServiceUnavailableError):
     """Raised when Redis operation fails."""
-    
+
     def __init__(self, message: str = "Cache service error occurred"):
         super().__init__(service="Cache", message=message)

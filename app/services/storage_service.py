@@ -18,7 +18,7 @@ from typing import BinaryIO, Optional
 
 import boto3
 from botocore.config import Config as BotoConfig
-from botocore.exceptions import ClientError, BotoCoreError
+from botocore.exceptions import BotoCoreError, ClientError
 from loguru import logger
 
 from app.config.settings import settings

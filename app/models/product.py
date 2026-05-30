@@ -1,13 +1,24 @@
 """
 Product SQLAlchemy Models
 """
-from sqlalchemy import (
-    Column, Float, Index, String, Text, Boolean, DateTime, ForeignKey,
-    Integer, Numeric, UniqueConstraint, func
-)
-from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import UUID
 import uuid
+
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 
 from app.config.database import Base
 
@@ -19,9 +30,9 @@ class Product(Base):
     Holds the master / "Global Admin" values for every product.  Branch-level
     overrides (price, discount, stock, on-sale flag) live in ``BranchInventory``.
     """
-    
+
     __tablename__ = "products"
-    
+
     product_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     slug = Column(String(255), unique=True, nullable=False)
@@ -65,7 +76,7 @@ class Product(Base):
     meta_description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
+
     # Relationships
     category = relationship("Category", back_populates="products")
     images = relationship("ProductImage", back_populates="product", cascade="all, delete-orphan")
@@ -76,7 +87,7 @@ class Product(Base):
         back_populates="product",
         cascade="all, delete-orphan",
     )
-    
+
     def __repr__(self):
         return f"<Product {self.name}>"
 
@@ -150,9 +161,9 @@ class BranchInventory(Base):
 
 class ProductImage(Base):
     """Product images model."""
-    
+
     __tablename__ = "product_images"
-    
+
     image_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     product_id = Column(UUID(as_uuid=True), ForeignKey("products.product_id", ondelete="CASCADE"), nullable=False)
     image_url = Column(String(500), nullable=False)
@@ -160,19 +171,19 @@ class ProductImage(Base):
     is_primary = Column(Boolean, default=False)
     sort_order = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
+
     # Relationship
     product = relationship("Product", back_populates="images")
-    
+
     def __repr__(self):
         return f"<ProductImage {self.image_id}>"
 
 
 class ProductVariant(Base):
     """Product variants model (size, color, etc.)."""
-    
+
     __tablename__ = "product_variants"
-    
+
     variant_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     product_id = Column(UUID(as_uuid=True), ForeignKey("products.product_id", ondelete="CASCADE"), nullable=False)
     name = Column(String(100), nullable=False)
@@ -185,55 +196,55 @@ class ProductVariant(Base):
     sort_order = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
+
     # Relationship
     product = relationship("Product", back_populates="variants")
     variant_options = relationship("VariantOption", back_populates="variant", cascade="all, delete-orphan")
-    
+
     def __repr__(self):
         return f"<ProductVariant {self.name}>"
 
 
 class VariantType(Base):
     """Variant types (e.g., Size, Color)."""
-    
+
     __tablename__ = "variant_types"
-    
+
     variant_type_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(50), nullable=False)
     display_name = Column(String(50), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
+
     # Relationship
     options = relationship("VariantOption", back_populates="variant_type")
-    
+
     def __repr__(self):
         return f"<VariantType {self.name}>"
 
 
 class VariantOption(Base):
     """Variant options linking variants to types."""
-    
+
     __tablename__ = "variant_options"
-    
+
     option_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     variant_id = Column(UUID(as_uuid=True), ForeignKey("product_variants.variant_id", ondelete="CASCADE"), nullable=False)
     variant_type_id = Column(UUID(as_uuid=True), ForeignKey("variant_types.variant_type_id"), nullable=False)
     value = Column(String(100), nullable=False)
-    
+
     # Relationships
     variant = relationship("ProductVariant", back_populates="variant_options")
     variant_type = relationship("VariantType", back_populates="options")
-    
+
     def __repr__(self):
         return f"<VariantOption {self.value}>"
 
 
 class Review(Base):
     """Product reviews model."""
-    
+
     __tablename__ = "reviews"
-    
+
     review_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     product_id = Column(UUID(as_uuid=True), ForeignKey("products.product_id", ondelete="CASCADE"), nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
@@ -244,10 +255,10 @@ class Review(Base):
     is_approved = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
+
     # Relationships
     product = relationship("Product", back_populates="reviews")
     user = relationship("User", back_populates="reviews")
-    
+
     def __repr__(self):
         return f"<Review {self.review_id}>"

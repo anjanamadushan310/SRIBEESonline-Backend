@@ -18,14 +18,14 @@ _ENV_FILE = _PROJECT_ROOT / ".env"
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
-    
+
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
     )
-    
+
     # =========================================================================
     # Application Settings
     # =========================================================================
@@ -33,21 +33,21 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development", description="Environment (development/staging/production)")
     debug: bool = Field(default=False, description="Debug mode")
     api_version: str = Field(default="v1", description="API version prefix")
-    
+
     # =========================================================================
     # Sentry Error Tracking
     # =========================================================================
     sentry_dsn: Optional[str] = Field(default=None, description="Sentry DSN for error tracking")
     sentry_traces_sample_rate: float = Field(default=0.1, description="Sentry traces sample rate (0.0-1.0)")
     sentry_profiles_sample_rate: float = Field(default=0.1, description="Sentry profiles sample rate (0.0-1.0)")
-    
+
     # =========================================================================
     # Server Settings
     # =========================================================================
     host: str = Field(default="0.0.0.0", description="Server host")
     port: int = Field(default=8000, description="Server port")
     workers: int = Field(default=4, description="Number of worker processes")
-    
+
     # =========================================================================
     # PostgreSQL Database Settings
     # =========================================================================
@@ -59,14 +59,14 @@ class Settings(BaseSettings):
     database_max_overflow: int = Field(default=10, description="Max overflow connections")
     database_pool_timeout: int = Field(default=30, description="Pool timeout in seconds")
     database_echo: bool = Field(default=False, description="Echo SQL queries (debug)")
-    
+
     # Backward compatibility with legacy env vars
     database_host: str = Field(default="localhost", description="Database host")
     database_port: int = Field(default=5432, description="Database port")
     database_name: str = Field(default="sribeesonline", description="Database name")
     database_user: str = Field(default="postgres", description="Database user")
     database_password: str = Field(default="", description="Database password")
-    
+
     @property
     def async_database_url(self) -> str:
         """Build async database URL from components if DATABASE_URL not set."""
@@ -76,7 +76,7 @@ class Settings(BaseSettings):
             f"postgresql+asyncpg://{self.database_user}:{self.database_password}"
             f"@{self.database_host}:{self.database_port}/{self.database_name}"
         )
-    
+
     # =========================================================================
     # Redis Settings
     # =========================================================================
@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     redis_port: int = Field(default=6379, description="Redis port")
     redis_password: Optional[str] = Field(default=None, description="Redis password")
     redis_db: int = Field(default=0, description="Redis database number")
-    
+
     @property
     def redis_connection_url(self) -> str:
         """Build Redis URL from components if REDIS_URL not set."""
@@ -97,7 +97,7 @@ class Settings(BaseSettings):
         if self.redis_password:
             return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
         return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
-    
+
     # =========================================================================
     # JWT Settings
     # =========================================================================
@@ -108,11 +108,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = Field(default="HS256", description="JWT algorithm")
     jwt_access_token_expire_minutes: int = Field(default=15, description="Access token expiry (minutes)")
     jwt_refresh_token_expire_days: int = Field(default=7, description="Refresh token expiry (days)")
-    
+
     # Backward compatibility with Express backend
     jwt_access_expiry: str = Field(default="15m", description="Access token expiry string")
     jwt_refresh_expiry: str = Field(default="7d", description="Refresh token expiry string")
-    
+
     # =========================================================================
     # Email Settings
     # =========================================================================
@@ -124,36 +124,36 @@ class Settings(BaseSettings):
     mail_password: str = Field(default="", description="SMTP password")
     mail_starttls: bool = Field(default=True, description="Use STARTTLS")
     mail_ssl_tls: bool = Field(default=False, description="Use SSL/TLS")
-    
+
     # Backward compatibility
     email_from: Optional[str] = Field(default=None)
     email_host: Optional[str] = Field(default=None)
     email_port: Optional[int] = Field(default=None)
     email_user: Optional[str] = Field(default=None)
     email_password: Optional[str] = Field(default=None)
-    
+
     # =========================================================================
     # Stripe Payment Settings
     # =========================================================================
     stripe_secret_key: str = Field(default="", description="Stripe secret key")
     stripe_publishable_key: str = Field(default="", description="Stripe publishable key")
     stripe_webhook_secret: str = Field(default="", description="Stripe webhook secret")
-    
+
     # =========================================================================
     # Firebase Cloud Messaging (FCM) Settings
     # =========================================================================
     firebase_credentials_path: Optional[str] = Field(
-        default=None, 
+        default=None,
         description="Path to Firebase service account JSON file"
     )
     fcm_server_key: Optional[str] = Field(
-        default=None, 
+        default=None,
         description="FCM server key (deprecated, use service account)"
     )
-    
+
     # Legacy Expo Push (deprecated - use FCM)
     expo_access_token: str = Field(default="", description="Expo push notification token (deprecated)")
-    
+
     # =========================================================================
     # CORS Settings
     # =========================================================================
@@ -164,10 +164,10 @@ class Settings(BaseSettings):
     cors_allow_credentials: bool = Field(default=True, description="Allow credentials")
     cors_allow_methods: List[str] = Field(default=["*"], description="Allowed methods")
     cors_allow_headers: List[str] = Field(default=["*"], description="Allowed headers")
-    
+
     # Backward compatibility
     frontend_url: str = Field(default="http://localhost:3001", description="Frontend URL")
-    
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):
@@ -179,18 +179,18 @@ class Settings(BaseSettings):
             except json.JSONDecodeError:
                 return [origin.strip() for origin in v.split(",")]
         return v
-    
+
     # =========================================================================
     # Rate Limiting Settings
     # =========================================================================
     rate_limit_per_minute: int = Field(default=60, description="Requests per minute")
     rate_limit_auth_per_minute: int = Field(default=10, description="Auth requests per minute")
     rate_limit_password_reset_per_hour: int = Field(default=3, description="Password reset per hour")
-    
+
     # Backward compatibility
     rate_limit_window_ms: int = Field(default=900000, description="Rate limit window (ms)")
     rate_limit_max_requests: int = Field(default=100, description="Max requests per window")
-    
+
     # =========================================================================
     # File Upload Settings
     # =========================================================================
@@ -200,7 +200,7 @@ class Settings(BaseSettings):
         default=["jpg", "jpeg", "png", "gif", "webp"],
         description="Allowed file extensions"
     )
-    
+
     # =========================================================================
     # Logging Settings
     # =========================================================================
@@ -212,26 +212,26 @@ class Settings(BaseSettings):
     log_file: Optional[str] = Field(default="logs/app.log", description="Log file path")
     log_rotation: str = Field(default="10 MB", description="Log rotation size")
     log_retention: str = Field(default="7 days", description="Log retention period")
-    
+
     # =========================================================================
     # Gemini AI / Semantic Search Settings
     # =========================================================================
     gemini_api_key: Optional[str] = Field(
-        default=None, 
+        default=None,
         description="Google Gemini API key for embeddings"
     )
     gemini_embedding_model: str = Field(
-        default="text-embedding-004", 
+        default="text-embedding-004",
         description="Gemini embedding model name"
     )
     gemini_embedding_dimension: int = Field(
-        default=768, 
+        default=768,
         description="Embedding vector dimension"
     )
-    
+
     # Semantic Search Configuration
     semantic_search_similarity_threshold: float = Field(
-        default=0.35, 
+        default=0.35,
         description="Default minimum similarity threshold (0.0-1.0)"
     )
     semantic_search_max_results: int = Field(
@@ -246,7 +246,7 @@ class Settings(BaseSettings):
         default=86400,
         description="Embedding cache TTL in seconds (24 hours)"
     )
-    
+
     # Circuit Breaker for AI Services
     ai_circuit_failure_threshold: int = Field(
         default=5,
@@ -256,7 +256,7 @@ class Settings(BaseSettings):
         default=60,
         description="Circuit recovery timeout in seconds"
     )
-    
+
     # =========================================================================
     # AWS S3 Storage Settings
     # =========================================================================
@@ -311,7 +311,7 @@ class Settings(BaseSettings):
     google_client_id: str = Field(default="", description="Google OAuth client ID")
     google_client_secret: str = Field(default="", description="Google OAuth client secret")
     google_callback_url: str = Field(default="", description="Google OAuth callback URL")
-    
+
     facebook_app_id: str = Field(default="", description="Facebook App ID")
     facebook_app_secret: str = Field(default="", description="Facebook App Secret")
     facebook_callback_url: str = Field(default="", description="Facebook OAuth callback URL")
@@ -321,7 +321,7 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """
     Get cached settings instance.
-    
+
     Uses LRU cache to ensure settings are loaded only once.
     """
     return Settings()

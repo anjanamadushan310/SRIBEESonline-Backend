@@ -16,9 +16,9 @@ import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header
+from loguru import logger
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
 from app.config.database import get_db
 from app.config.redis import get_redis

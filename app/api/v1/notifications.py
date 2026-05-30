@@ -1,21 +1,20 @@
 """
 Notification API Endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
 from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
-from app.core.dependencies import get_current_user, get_current_admin
-from app.services.notification_service import NotificationService
+from app.core.dependencies import get_current_admin, get_current_user
 from app.schemas.notification import (
-    CreateNotificationRequest,
     BroadcastNotificationRequest,
+    CreateNotificationRequest,
     RegisterPushTokenRequest,
-    NotificationTypeEnum,
 )
+from app.services.notification_service import NotificationService
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
@@ -64,7 +63,7 @@ async def get_notifications(
             offset=offset,
             unread_only=unread_only
         )
-        
+
         return {
             "success": True,
             "data": {
@@ -95,7 +94,7 @@ async def get_unread_count(
     """
     try:
         count = await NotificationService.get_unread_count(db, current_user.user_id)
-        
+
         return {
             "success": True,
             "data": {
@@ -125,13 +124,13 @@ async def mark_notification_read(
             notification_id=UUID(notification_id),
             user_id=current_user.user_id
         )
-        
+
         if not notification:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Notification not found"
             )
-        
+
         return {
             "success": True,
             "data": format_notification(notification),
@@ -162,7 +161,7 @@ async def mark_all_read(
     """
     try:
         count = await NotificationService.mark_all_as_read(db, current_user.user_id)
-        
+
         return {
             "success": True,
             "data": {
@@ -193,13 +192,13 @@ async def delete_notification(
             notification_id=UUID(notification_id),
             user_id=current_user.user_id
         )
-        
+
         if not deleted:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Notification not found"
             )
-        
+
         return {
             "success": True,
             "message": "Notification deleted"
@@ -229,7 +228,7 @@ async def delete_all_notifications(
     """
     try:
         count = await NotificationService.delete_all(db, current_user.user_id)
-        
+
         return {
             "success": True,
             "data": {
@@ -266,7 +265,7 @@ async def register_push_token(
             device_type=data.device_type,
             device_name=data.device_name
         )
-        
+
         return {
             "success": True,
             "data": {
@@ -300,13 +299,13 @@ async def unregister_push_token(
             user_id=current_user.user_id,
             token=token
         )
-        
+
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Push token not found"
             )
-        
+
         return {
             "success": True,
             "message": "Push token unregistered"
@@ -346,7 +345,7 @@ async def send_notification(
             data=data.data,
             send_push=data.send_push
         )
-        
+
         return {
             "success": True,
             "data": format_notification(notification),
@@ -373,14 +372,14 @@ async def broadcast_notification(
 ):
     """
     Broadcast notification to all users (Admin only).
-    
+
     Note: In production, implement async job for large user bases.
     """
     try:
         # For now, just log the broadcast request
         # In production, queue this as a background job
         logger.info(f"Broadcast notification: {data.title}")
-        
+
         return {
             "success": True,
             "message": "Broadcast notification queued",

@@ -9,29 +9,33 @@ Implements the **Global Catalog + Branch Overrides** pattern:
         effective_discount = branch_discount ?? product.discount_percentage
   - A ``BranchInventory.is_active = False`` row hides the product for that branch.
 """
-from typing import Any, Dict, Optional, List, Tuple
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
-from decimal import Decimal, ROUND_HALF_UP
-from sqlalchemy import select, func, or_, and_, case, literal
-from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
+
 from loguru import logger
+from sqlalchemy import and_, func, literal, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.product import (
     BranchInventory,
     Product,
     ProductImage,
     ProductVariant,
-    VariantType,
     VariantOption,
 )
-from app.models.category import Category
-from app.schemas.product import ProductCreate, ProductUpdate, ProductImageCreate, ProductVariantCreate
+from app.schemas.product import (
+    ProductCreate,
+    ProductImageCreate,
+    ProductUpdate,
+    ProductVariantCreate,
+)
 
 
 class ProductService:
     """Service class for product operations."""
-    
+
     @staticmethod
     async def get_all(
         db: AsyncSession,
@@ -47,7 +51,7 @@ class ProductService:
         sort_order: str = "desc"
     ) -> Tuple[List[Product], int]:
         """Get all products with filtering and pagination."""
-        
+
         # Base query
         query = (
             select(Product)
@@ -57,14 +61,14 @@ class ProductService:
             )
             .where(Product.is_active == True)
         )
-        
+
         # Apply filters
         if category_id:
             query = query.where(Product.category_id == category_id)
-        
+
         if is_featured is not None:
             query = query.where(Product.is_featured == is_featured)
-        
+
         if search:
             search_pattern = f"%{search}%"
             query = query.where(
@@ -73,43 +77,43 @@ class ProductService:
                     Product.description.ilike(search_pattern)
                 )
             )
-        
+
         if min_price is not None:
             query = query.where(Product.price >= min_price)
-        
+
         if max_price is not None:
             query = query.where(Product.price <= max_price)
-        
+
         if in_stock is not None:
             if in_stock:
                 query = query.where(Product.stock_quantity > 0)
             else:
                 query = query.where(Product.stock_quantity <= 0)
-        
+
         # Count total
         count_query = select(func.count()).select_from(query.subquery())
         total_result = await db.execute(count_query)
         total = total_result.scalar()
-        
+
         # Apply sorting
         sort_column = getattr(Product, sort_by, Product.created_at)
         if sort_order.lower() == "asc":
             query = query.order_by(sort_column.asc())
         else:
             query = query.order_by(sort_column.desc())
-        
+
         # Apply pagination
         query = query.limit(limit).offset(offset)
-        
+
         # Execute
         result = await db.execute(query)
         products = result.scalars().all()
-        
+
         return products, total
-    
+
     @staticmethod
     async def get_by_id(
-        db: AsyncSession, 
+        db: AsyncSession,
         product_id: UUID,
         include_inactive: bool = False
     ) -> Optional[Product]:
@@ -123,13 +127,13 @@ class ProductService:
             )
             .where(Product.product_id == product_id)
         )
-        
+
         if not include_inactive:
             query = query.where(Product.is_active == True)
-        
+
         result = await db.execute(query)
         return result.scalar_one_or_none()
-    
+
     @staticmethod
     async def get_by_slug(
         db: AsyncSession,
@@ -146,13 +150,13 @@ class ProductService:
             )
             .where(Product.slug == slug)
         )
-        
+
         if not include_inactive:
             query = query.where(Product.is_active == True)
-        
+
         result = await db.execute(query)
         return result.scalar_one_or_none()
-    
+
     @staticmethod
     async def get_by_id_or_slug(
         db: AsyncSession,
@@ -167,9 +171,9 @@ class ProductService:
                 return product
         except ValueError:
             pass
-        
+
         return await ProductService.get_by_slug(db, identifier, include_inactive)
-    
+
     @staticmethod
     async def get_featured(
         db: AsyncSession,
@@ -186,10 +190,10 @@ class ProductService:
             .order_by(Product.created_at.desc())
             .limit(limit)
         )
-        
+
         result = await db.execute(query)
         return result.scalars().all()
-    
+
     @staticmethod
     async def get_by_category(
         db: AsyncSession,
@@ -199,12 +203,12 @@ class ProductService:
     ) -> Tuple[List[Product], int]:
         """Get products by category."""
         return await ProductService.get_all(
-            db, 
-            limit=limit, 
-            offset=offset, 
+            db,
+            limit=limit,
+            offset=offset,
             category_id=category_id
         )
-    
+
     @staticmethod
     async def search(
         db: AsyncSession,
@@ -219,7 +223,7 @@ class ProductService:
             offset=offset,
             search=query_string
         )
-    
+
     @staticmethod
     async def create(
         db: AsyncSession,
@@ -245,13 +249,13 @@ class ProductService:
             meta_title=data.meta_title,
             meta_description=data.meta_description
         )
-        
+
         db.add(product)
         await db.commit()
         await db.refresh(product)
-        
+
         return product
-    
+
     @staticmethod
     async def update(
         db: AsyncSession,
@@ -260,21 +264,21 @@ class ProductService:
     ) -> Product:
         """Update an existing product."""
         update_data = data.model_dump(exclude_unset=True)
-        
+
         for field, value in update_data.items():
             setattr(product, field, value)
-        
+
         await db.commit()
         await db.refresh(product)
-        
+
         return product
-    
+
     @staticmethod
     async def delete(db: AsyncSession, product: Product) -> None:
         """Delete a product."""
         await db.delete(product)
         await db.commit()
-    
+
     @staticmethod
     async def increment_view_count(db: AsyncSession, product_id: UUID) -> None:
         """Increment product view count."""
@@ -282,7 +286,7 @@ class ProductService:
         if product:
             product.view_count += 1
             await db.commit()
-    
+
     @staticmethod
     async def add_image(
         db: AsyncSession,
@@ -297,7 +301,7 @@ class ProductService:
                 .where(ProductImage.product_id == product_id)
                 .values(is_primary=False)
             )
-        
+
         image = ProductImage(
             product_id=product_id,
             image_url=data.image_url,
@@ -305,13 +309,13 @@ class ProductService:
             is_primary=data.is_primary,
             sort_order=data.sort_order
         )
-        
+
         db.add(image)
         await db.commit()
         await db.refresh(image)
-        
+
         return image
-    
+
     @staticmethod
     async def remove_image(db: AsyncSession, image_id: UUID) -> None:
         """Remove a product image."""
@@ -319,11 +323,11 @@ class ProductService:
             select(ProductImage).where(ProductImage.image_id == image_id)
         )
         image = result.scalar_one_or_none()
-        
+
         if image:
             await db.delete(image)
             await db.commit()
-    
+
     @staticmethod
     async def has_variants(db: AsyncSession, product_id: UUID) -> bool:
         """Check if product has variants."""
@@ -333,7 +337,7 @@ class ProductService:
         )
         count = result.scalar()
         return count > 0
-    
+
     @staticmethod
     async def get_variants(db: AsyncSession, product_id: UUID) -> List[ProductVariant]:
         """Get product variants."""
@@ -344,7 +348,7 @@ class ProductService:
             .order_by(ProductVariant.sort_order)
         )
         return result.scalars().all()
-    
+
     @staticmethod
     async def add_variant(
         db: AsyncSession,
@@ -363,13 +367,13 @@ class ProductService:
             is_active=data.is_active,
             sort_order=data.sort_order
         )
-        
+
         db.add(variant)
         await db.commit()
         await db.refresh(variant)
-        
+
         return variant
-    
+
     @staticmethod
     async def update_stock(
         db: AsyncSession,
@@ -389,7 +393,7 @@ class ProductService:
             product = await ProductService.get_by_id(db, product_id, include_inactive=True)
             if product:
                 product.stock_quantity = quantity
-        
+
         await db.commit()
 
     # ================================================================
@@ -817,7 +821,7 @@ class ProductService:
         rows = result.unique().all()
 
         items: List[Dict[str, Any]] = []
-        for product, inv, discount_val, price_val in rows:
+        for product, inv, _discount_val, _price_val in rows:
             eff_data = ProductService.compute_effective_data(product, inv)
             items.append({
                 "product": product,

@@ -11,33 +11,32 @@ import time
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from loguru import logger
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
 from app.config.database import get_db
 from app.config.redis import get_redis
 from app.config.settings import get_settings
 from app.core.dependencies import get_current_user
 from app.schemas.semantic_search import (
-    SemanticSearchRequest,
-    SemanticSearchResponse,
-    ProductSearchResultResponse,
+    CategoryInfo,
     PaginationResponse,
-    SearchMetadataResponse,
-    SearchSuggestionsRequest,
-    SearchSuggestionsResponse,
     PopularSearchesResponse,
     PopularSearchItem,
+    ProductSearchResultResponse,
     SearchErrorResponse,
-    CategoryInfo,
-)
-from app.services.semantic_search_service import (
-    SemanticSearchService,
-    SemanticSearchFilters,
+    SearchMetadataResponse,
+    SearchSuggestionsResponse,
+    SemanticSearchRequest,
+    SemanticSearchResponse,
 )
 from app.services import branch_service
+from app.services.semantic_search_service import (
+    SemanticSearchFilters,
+    SemanticSearchService,
+)
 
 router = APIRouter()
 settings = get_settings()
@@ -78,19 +77,19 @@ async def get_search_service(
     summary="Semantic Product Search",
     description="""
     Search for products using natural language queries.
-    
+
     **Multilingual Support:**
     - English: "fresh red apples"
-    - Sinhala: "රතු ඇපල් ගෙඩි"  
+    - Sinhala: "රතු ඇපල් ගෙඩි"
     - Tamil: "சிவப்பு ஆப்பிள்"
     - Singlish: "rata apple gedi"
-    
+
     **Search Features:**
     - AI-powered semantic understanding via Gemini embeddings
     - Automatic fallback to keyword search if AI unavailable
     - Filtering by category, price range, and stock status
     - Results ranked by relevance/similarity score
-    
+
     **Caching:**
     - Search results cached for 1 hour
     - Embeddings cached for 24 hours
@@ -137,12 +136,12 @@ async def search_products(
                 similarity_threshold=settings.semantic_search_similarity_threshold,
                 branch_id=branch_id,
             )
-        
+
         # Get pagination parameters
         page = request.pagination.page if request.pagination else 1
         page_size = request.pagination.page_size if request.pagination else 20
         offset = (page - 1) * page_size
-        
+
         # Perform search
         search_result = await search_service.search(
             query=request.query,
@@ -150,10 +149,10 @@ async def search_products(
             limit=page_size,
             offset=offset,
         )
-        
+
         # Calculate timing
         took_ms = int((time.time() - start_time) * 1000)
-        
+
         # Track analytics if enabled
         if request.options is None or request.options.track_analytics:
             try:
@@ -164,7 +163,7 @@ async def search_products(
                 )
             except Exception as e:
                 logger.warning(f"Failed to track analytics: {e}")
-        
+
         # Build response
         results = []
         for product in search_result.products:
@@ -175,14 +174,14 @@ async def search_products(
                     id=product.category_id,
                     name=product.category_name,
                 )
-            
+
             # Calculate discount percentage
             discount_percentage = None
             if product.compare_at_price and product.price < product.compare_at_price:
                 discount_percentage = round(
                     (1 - product.price / product.compare_at_price) * 100, 1
                 )
-            
+
             results.append(
                 ProductSearchResultResponse(
                     product_id=product.product_id,
@@ -201,10 +200,10 @@ async def search_products(
                     relevance_score=product.relevance_score,
                 )
             )
-        
+
         # Calculate pagination
         total_pages = (search_result.total_count + page_size - 1) // page_size if page_size > 0 else 0
-        
+
         return SemanticSearchResponse(
             results=results,
             pagination=PaginationResponse(
@@ -223,7 +222,7 @@ async def search_products(
             ),
             facets=None,  # TODO: Implement faceted search
         )
-        
+
     except ValueError as e:
         logger.warning(f"Invalid search request: {e}")
         raise HTTPException(
@@ -269,7 +268,7 @@ async def get_search_suggestions(
 ) -> SearchSuggestionsResponse:
     """
     Get search suggestions based on popular past searches.
-    
+
     Returns suggestions that start with the provided query prefix,
     sorted by popularity.
     """
@@ -278,12 +277,12 @@ async def get_search_suggestions(
             query=query,
             limit=limit,
         )
-        
+
         return SearchSuggestionsResponse(
             suggestions=suggestions,
             query=query,
         )
-        
+
     except Exception as e:
         logger.error(f"Suggestions error: {e}")
         return SearchSuggestionsResponse(
@@ -309,20 +308,20 @@ async def get_popular_searches(
 ) -> PopularSearchesResponse:
     """
     Get the most popular search queries.
-    
+
     Returns popular searches sorted by frequency, useful for
     displaying trending searches on the homepage.
     """
     try:
         popular = await search_service.get_popular_searches(limit=limit)
-        
+
         return PopularSearchesResponse(
             searches=[
                 PopularSearchItem(query=q, count=c)
                 for q, c in popular
             ]
         )
-        
+
     except Exception as e:
         logger.error(f"Popular searches error: {e}")
         return PopularSearchesResponse(searches=[])
@@ -342,7 +341,7 @@ async def search_health_check(
 ):
     """
     Check semantic search service health.
-    
+
     Returns status of:
     - Embedding service (Gemini API)
     - Vector database (pgvector)
@@ -356,7 +355,7 @@ async def search_health_check(
             "cache": "unknown",
         },
     }
-    
+
     try:
         # Check embedding service
         embedding_service = search_service.embedding_service
@@ -365,12 +364,12 @@ async def search_health_check(
             health["components"]["embedding_service"] = circuit_state
             if circuit_state == "open":
                 health["status"] = "degraded"
-        
+
         # Check database (simple query)
         from sqlalchemy import text
         await search_service.db.execute(text("SELECT 1"))
         health["components"]["vector_database"] = "healthy"
-        
+
         # Check Redis
         from app.config.redis import get_redis_client
         redis = await get_redis_client()
@@ -379,10 +378,10 @@ async def search_health_check(
             health["components"]["cache"] = "healthy"
         else:
             health["components"]["cache"] = "not_configured"
-            
+
     except Exception as e:
         logger.error(f"Health check error: {e}")
         health["status"] = "unhealthy"
         health["error"] = str(e)
-    
+
     return health

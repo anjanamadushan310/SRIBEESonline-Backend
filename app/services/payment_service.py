@@ -1,21 +1,20 @@
 """
 Payment Service - Stripe Integration
 """
-from typing import Optional
 from decimal import Decimal
-from loguru import logger
+from typing import Optional
 
-from app.config.settings import settings
+from loguru import logger
 
 
 class PaymentService:
     """
     Payment service for handling Stripe payments.
-    
+
     Note: In production, implement actual Stripe SDK integration.
     This is a stub implementation for the migration.
     """
-    
+
     @staticmethod
     async def create_payment_intent(
         amount: Decimal,
@@ -25,12 +24,12 @@ class PaymentService:
     ) -> dict:
         """
         Create a Stripe payment intent.
-        
+
         In production, use:
         ```python
         import stripe
         stripe.api_key = settings.stripe_secret_key
-        
+
         intent = stripe.PaymentIntent.create(
             amount=int(amount * 100),  # Convert to paise
             currency=currency,
@@ -40,12 +39,12 @@ class PaymentService:
         """
         # Stub implementation
         import uuid
-        
+
         payment_intent_id = f"pi_{uuid.uuid4().hex[:24]}"
         client_secret = f"{payment_intent_id}_secret_{uuid.uuid4().hex[:24]}"
-        
+
         logger.info(f"Created payment intent: {payment_intent_id} for order {order_id}")
-        
+
         return {
             "payment_intent_id": payment_intent_id,
             "client_secret": client_secret,
@@ -53,7 +52,7 @@ class PaymentService:
             "currency": currency,
             "status": "requires_payment_method"
         }
-    
+
     @staticmethod
     async def confirm_payment(
         payment_intent_id: str,
@@ -61,7 +60,7 @@ class PaymentService:
     ) -> dict:
         """
         Confirm a payment intent.
-        
+
         In production, use:
         ```python
         intent = stripe.PaymentIntent.confirm(
@@ -72,13 +71,13 @@ class PaymentService:
         """
         # Stub implementation
         logger.info(f"Confirmed payment: {payment_intent_id}")
-        
+
         return {
             "payment_intent_id": payment_intent_id,
             "status": "succeeded",
             "amount_received": 0  # Would be actual amount
         }
-    
+
     @staticmethod
     async def retrieve_payment_intent(payment_intent_id: str) -> dict:
         """
@@ -89,7 +88,7 @@ class PaymentService:
             "payment_intent_id": payment_intent_id,
             "status": "succeeded"
         }
-    
+
     @staticmethod
     async def create_refund(
         payment_intent_id: str,
@@ -98,7 +97,7 @@ class PaymentService:
     ) -> dict:
         """
         Create a refund for a payment.
-        
+
         In production, use:
         ```python
         refund = stripe.Refund.create(
@@ -110,11 +109,11 @@ class PaymentService:
         """
         import uuid
         from datetime import datetime
-        
+
         refund_id = f"re_{uuid.uuid4().hex[:24]}"
-        
+
         logger.info(f"Created refund: {refund_id} for payment {payment_intent_id}")
-        
+
         return {
             "refund_id": refund_id,
             "payment_intent_id": payment_intent_id,
@@ -123,12 +122,12 @@ class PaymentService:
             "reason": reason,
             "created_at": datetime.utcnow()
         }
-    
+
     @staticmethod
     async def handle_webhook(payload: bytes, signature: str) -> dict:
         """
         Handle Stripe webhook events.
-        
+
         In production, use:
         ```python
         event = stripe.Webhook.construct_event(
@@ -138,13 +137,13 @@ class PaymentService:
         """
         # Stub implementation
         import json
-        
+
         try:
             event_data = json.loads(payload)
             event_type = event_data.get("type", "unknown")
-            
+
             logger.info(f"Received webhook: {event_type}")
-            
+
             return {
                 "received": True,
                 "event_type": event_type
@@ -152,7 +151,7 @@ class PaymentService:
         except Exception as e:
             logger.error(f"Webhook error: {e}")
             raise ValueError("Invalid webhook payload")
-    
+
     @staticmethod
     async def create_customer(
         email: str,
@@ -163,21 +162,21 @@ class PaymentService:
         Create a Stripe customer.
         """
         import uuid
-        
+
         customer_id = f"cus_{uuid.uuid4().hex[:24]}"
         logger.info(f"Created Stripe customer: {customer_id}")
-        
+
         return customer_id
-    
+
     # ========================================================================
     # Saved Cards Methods
     # ========================================================================
-    
+
     @staticmethod
     async def get_saved_cards(user_id: str) -> list:
         """
         Get user's saved payment methods.
-        
+
         In production, use:
         ```python
         payment_methods = stripe.PaymentMethod.list(
@@ -186,12 +185,11 @@ class PaymentService:
         )
         ```
         """
-        from datetime import datetime
-        
+
         # Stub implementation - return empty list or mock data
         # In production, query Stripe for customer's saved cards
         return []
-    
+
     @staticmethod
     async def save_card(
         user_id: str,
@@ -200,7 +198,7 @@ class PaymentService:
     ) -> dict:
         """
         Attach a payment method to customer and optionally set as default.
-        
+
         In production:
         1. Get or create Stripe customer
         2. Attach payment method to customer
@@ -208,12 +206,12 @@ class PaymentService:
         """
         import uuid
         from datetime import datetime
-        
+
         # Stub implementation
         card_id = f"pm_{uuid.uuid4().hex[:24]}"
-        
+
         logger.info(f"Saved card {card_id} for user {user_id}")
-        
+
         return {
             "card_id": card_id,
             "brand": "visa",
@@ -223,12 +221,12 @@ class PaymentService:
             "is_default": set_default,
             "created_at": datetime.utcnow()
         }
-    
+
     @staticmethod
     async def delete_saved_card(user_id: str, card_id: str) -> bool:
         """
         Detach a payment method from customer.
-        
+
         In production:
         ```python
         stripe.PaymentMethod.detach(card_id)
@@ -236,16 +234,18 @@ class PaymentService:
         """
         logger.info(f"Deleted card {card_id} for user {user_id}")
         return True
-    
+
     @staticmethod
     async def get_payment_history(user_id: str, db) -> list:
         """
         Get user's payment history from orders.
         """
-        from sqlalchemy import select
-        from app.models.order import Order
         from uuid import UUID
-        
+
+        from sqlalchemy import select
+
+        from app.models.order import Order
+
         result = await db.execute(
             select(Order)
             .where(Order.user_id == UUID(user_id))
@@ -254,7 +254,7 @@ class PaymentService:
             .limit(50)
         )
         orders = result.scalars().all()
-        
+
         payments = []
         for order in orders:
             payments.append({
@@ -266,5 +266,5 @@ class PaymentService:
                 "payment_method": order.payment_method or "card",
                 "created_at": order.created_at
             })
-        
+
         return payments

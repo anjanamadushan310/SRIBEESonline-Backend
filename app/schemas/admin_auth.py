@@ -45,7 +45,7 @@ class AdminResponse(BaseModel):
     is_active: bool = Field(..., alias="isActive")
     last_login: Optional[datetime] = Field(None, alias="lastLogin")
     created_at: datetime = Field(..., alias="createdAt")
-    
+
     class Config:
         from_attributes = True
         populate_by_name = True
@@ -55,7 +55,7 @@ class AdminTokensResponse(BaseModel):
     """Admin JWT tokens response."""
     access_token: str = Field(..., alias="accessToken")
     refresh_token: str = Field(..., alias="refreshToken")
-    
+
     class Config:
         populate_by_name = True
 
@@ -87,7 +87,7 @@ class BranchResponse(BaseModel):
     name: str
     address: Optional[str] = None
     is_active: bool = Field(..., alias="isActive")
-    
+
     class Config:
         from_attributes = True
         populate_by_name = True

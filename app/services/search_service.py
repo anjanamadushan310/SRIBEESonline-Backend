@@ -9,26 +9,26 @@ Advanced search with:
 - Redis caching for performance
 - **Branch-inventory visibility enforcement** (JOIN + active + in-stock)
 """
-from typing import Optional, List, Dict, Any, Tuple
-from uuid import UUID
-from decimal import Decimal
-from datetime import datetime, timedelta
-import json
 import hashlib
+import json
+from datetime import datetime
+from decimal import Decimal
+from typing import Any, Dict, List, Optional
+from uuid import UUID
 
-from sqlalchemy import select, func, or_, and_, case, desc, text
-from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
+from sqlalchemy import and_, case, desc, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.product import Product, ProductImage, BranchInventory
-from app.models.category import Category
 from app.config.redis import get_redis
+from app.models.category import Category
+from app.models.product import BranchInventory, Product
 
 
 class SearchFilters:
     """Search filter parameters."""
-    
+
     def __init__(
         self,
         query: Optional[str] = None,
@@ -62,7 +62,7 @@ class SearchFilters:
         self.sort_by = sort_by
         self.sort_order = sort_order
         self.branch_id = branch_id
-    
+
     def cache_key(self) -> str:
         """Generate cache key for these filters."""
         key_data = {
@@ -86,7 +86,7 @@ class SearchFilters:
 
 class SearchResult:
     """Search result with metadata."""
-    
+
     def __init__(
         self,
         products: List[Product],
@@ -104,9 +104,9 @@ class SearchResult:
 
 class ProductSearchService:
     """Enhanced product search with caching and facets."""
-    
+
     CACHE_TTL = 300  # 5 minutes
-    
+
     @classmethod
     async def search(
         cls,
@@ -118,7 +118,7 @@ class ProductSearchService:
     ) -> SearchResult:
         """
         Search products with advanced filtering.
-        
+
         Supports:
         - Full-text search with relevance ranking
         - Category filtering (single or multiple)
@@ -129,7 +129,7 @@ class ProductSearchService:
         - Faceted results
         """
         start_time = datetime.utcnow()
-        
+
         # Try cache first
         cache_key = f"{filters.cache_key()}:{limit}:{offset}"
         cached = await cls._get_cached(cache_key)
@@ -141,51 +141,51 @@ class ProductSearchService:
                 query_time_ms=0,
                 from_cache=True,
             )
-        
+
         # Build query
         query = cls._build_search_query(filters)
-        
+
         # Get total count
         count_query = select(func.count()).select_from(query.subquery())
         total_result = await db.execute(count_query)
         total = total_result.scalar() or 0
-        
+
         # Apply sorting
         query = cls._apply_sorting(query, filters)
-        
+
         # Apply pagination
         query = query.limit(limit).offset(offset)
-        
+
         # Load relationships
         query = query.options(
             selectinload(Product.category),
             selectinload(Product.images),
         )
-        
+
         # Execute
         result = await db.execute(query)
         products = result.scalars().all()
-        
+
         # Get facets
         facets = {}
         if include_facets:
             facets = await cls._get_facets(db, filters)
-        
+
         query_time = (datetime.utcnow() - start_time).total_seconds() * 1000
-        
+
         # Cache results
         await cls._cache_results(cache_key, products, total, facets)
-        
+
         # Log search analytics
         await cls._log_search(filters.query, total)
-        
+
         return SearchResult(
             products=products,
             total=total,
             facets=facets,
             query_time_ms=query_time,
         )
-    
+
     @classmethod
     def _build_search_query(cls, filters: SearchFilters):
         """
@@ -273,12 +273,12 @@ class ProductSearchService:
             query = query.where(Product.average_rating >= filters.rating_min)
 
         return query
-    
+
     @classmethod
     def _apply_sorting(cls, query, filters: SearchFilters):
         """Apply sorting to query."""
         sort_order = desc if filters.sort_order == "desc" else lambda x: x.asc()
-        
+
         if filters.sort_by == "price_low":
             # Sort by effective price (sale_price if exists, else price)
             query = query.order_by(
@@ -316,17 +316,17 @@ class ProductSearchService:
                 )
             else:
                 query = query.order_by(Product.created_at.desc())
-        
+
         return query
-    
+
     @classmethod
     async def _get_facets(cls, db: AsyncSession, filters: SearchFilters) -> Dict[str, Any]:
         """Get faceted search results."""
         facets = {}
-        
+
         # Build base query (without category/brand/price filters for accurate facets)
         base_query = select(Product).where(Product.is_active == True)
-        
+
         if filters.query:
             base_query = base_query.where(
                 or_(
@@ -334,7 +334,7 @@ class ProductSearchService:
                     func.lower(Product.description).contains(filters.query.lower()),
                 )
             )
-        
+
         # Category facets
         cat_query = (
             select(
@@ -348,13 +348,13 @@ class ProductSearchService:
             .order_by(desc("count"))
             .limit(20)
         )
-        
+
         cat_result = await db.execute(cat_query)
         facets["categories"] = [
             {"id": str(row.category_id), "name": row.name, "count": row.count}
             for row in cat_result
         ]
-        
+
         # Price range facets
         price_query = select(
             func.min(
@@ -370,7 +370,7 @@ class ProductSearchService:
                 )
             ).label("max_price"),
         ).where(Product.is_active == True)
-        
+
         price_result = await db.execute(price_query)
         price_row = price_result.first()
         if price_row:
@@ -378,7 +378,7 @@ class ProductSearchService:
                 "min": float(price_row.min_price) if price_row.min_price else 0,
                 "max": float(price_row.max_price) if price_row.max_price else 0,
             }
-        
+
         # Brand facets
         brand_query = (
             select(
@@ -390,16 +390,16 @@ class ProductSearchService:
             .order_by(desc("count"))
             .limit(20)
         )
-        
+
         brand_result = await db.execute(brand_query)
         facets["brands"] = [
             {"name": row.brand, "count": row.count}
             for row in brand_result
             if row.brand
         ]
-        
+
         return facets
-    
+
     @classmethod
     async def autocomplete(
         cls,
@@ -409,15 +409,15 @@ class ProductSearchService:
     ) -> List[Dict[str, Any]]:
         """
         Get autocomplete suggestions for search.
-        
+
         Returns product names and categories matching the query.
         """
         if not query or len(query) < 2:
             return []
-        
+
         suggestions = []
         search_term = f"{query.lower()}%"
-        
+
         # Product name suggestions
         product_query = (
             select(Product.name, Product.product_id)
@@ -430,7 +430,7 @@ class ProductSearchService:
             .order_by(Product.sales_count.desc().nullslast())
             .limit(limit)
         )
-        
+
         product_result = await db.execute(product_query)
         for row in product_result:
             suggestions.append({
@@ -438,7 +438,7 @@ class ProductSearchService:
                 "text": row.name,
                 "id": str(row.product_id),
             })
-        
+
         # Category suggestions
         if len(suggestions) < limit:
             cat_query = (
@@ -446,7 +446,7 @@ class ProductSearchService:
                 .where(func.lower(Category.name).like(search_term))
                 .limit(limit - len(suggestions))
             )
-            
+
             cat_result = await db.execute(cat_query)
             for row in cat_result:
                 suggestions.append({
@@ -454,16 +454,16 @@ class ProductSearchService:
                     "text": row.name,
                     "id": str(row.category_id),
                 })
-        
+
         return suggestions
-    
+
     @classmethod
     async def get_trending_searches(cls, limit: int = 10) -> List[str]:
         """Get trending search terms from Redis."""
         redis = get_redis()
         if not redis:
             return []
-        
+
         try:
             # Get top search terms by score
             trending = await redis.zrevrange(
@@ -476,48 +476,48 @@ class ProductSearchService:
         except Exception as e:
             logger.error(f"Failed to get trending searches: {e}")
             return []
-    
+
     @classmethod
     async def _log_search(cls, query: Optional[str], result_count: int) -> None:
         """Log search for analytics."""
         if not query:
             return
-        
+
         redis = get_redis()
         if not redis:
             return
-        
+
         try:
             # Increment search term count
             await redis.zincrby("search:trending", 1, query.lower())
-            
+
             # Trim to top 1000 terms
             await redis.zremrangebyrank("search:trending", 0, -1001)
-            
+
             # Log zero-result searches for improvement
             if result_count == 0:
                 await redis.lpush("search:zero_results", query.lower())
                 await redis.ltrim("search:zero_results", 0, 999)
-                
+
         except Exception as e:
             logger.error(f"Failed to log search: {e}")
-    
+
     @classmethod
     async def _get_cached(cls, cache_key: str) -> Optional[Dict]:
         """Get cached search results."""
         redis = get_redis()
         if not redis:
             return None
-        
+
         try:
             cached = await redis.get(cache_key)
             if cached:
                 return json.loads(cached)
         except Exception as e:
             logger.error(f"Cache get failed: {e}")
-        
+
         return None
-    
+
     @classmethod
     async def _cache_results(
         cls,
@@ -530,7 +530,7 @@ class ProductSearchService:
         redis = get_redis()
         if not redis:
             return
-        
+
         try:
             # Serialize products (just IDs and basic info for cache)
             cache_data = {

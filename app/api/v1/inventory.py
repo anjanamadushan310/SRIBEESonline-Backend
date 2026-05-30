@@ -14,14 +14,14 @@ branch assigned to their admin account.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
 from app.core.dependencies import require_roles
 from app.schemas.product import (
-    StockUpdateRequest,
     PricingUpdateRequest,
+    StockUpdateRequest,
 )
 from app.services.product_service import ProductService
 

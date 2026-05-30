@@ -3,26 +3,26 @@ Notification Service
 
 Push notifications using Firebase Cloud Messaging (FCM).
 """
-from typing import Optional, List, Tuple
-from uuid import UUID
 from datetime import datetime
-from sqlalchemy import select, func, and_, update
-from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
+from typing import List, Optional, Tuple
+from uuid import UUID
 
-from app.models.notification import Notification, PushToken, NotificationType
-from app.schemas.notification import CreateNotificationRequest, NotificationTypeEnum
-from app.config.settings import settings
-from app.services.fcm_service import FCMService, NotificationTemplates
+from loguru import logger
+from sqlalchemy import and_, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.notification import Notification, PushToken
+from app.schemas.notification import NotificationTypeEnum
+from app.services.fcm_service import FCMService
 
 
 class NotificationService:
     """Service class for notification operations."""
-    
+
     # ========================================================================
     # Notification CRUD
     # ========================================================================
-    
+
     @staticmethod
     async def create(
         db: AsyncSession,
@@ -45,21 +45,21 @@ class NotificationService:
             reference_id=reference_id,
             data=data
         )
-        
+
         db.add(notification)
         await db.commit()
         await db.refresh(notification)
-        
+
         # Send push notification
         if send_push:
             await NotificationService.send_push_notification(
                 db, user_id, title, message, data
             )
-        
+
         logger.info(f"Notification created: {notification.notification_id} for user {user_id}")
-        
+
         return notification
-    
+
     @staticmethod
     async def get_by_user(
         db: AsyncSession,
@@ -70,22 +70,22 @@ class NotificationService:
     ) -> Tuple[List[Notification], int]:
         """Get user's notifications."""
         query = select(Notification).where(Notification.user_id == user_id)
-        
+
         if unread_only:
             query = query.where(Notification.is_read == False)
-        
+
         # Count
         count_query = select(func.count()).select_from(query.subquery())
         total_result = await db.execute(count_query)
         total = total_result.scalar()
-        
+
         # Get notifications
         query = query.order_by(Notification.created_at.desc()).limit(limit).offset(offset)
         result = await db.execute(query)
         notifications = result.scalars().all()
-        
+
         return notifications, total
-    
+
     @staticmethod
     async def get_unread_count(db: AsyncSession, user_id: UUID) -> int:
         """Get unread notification count."""
@@ -97,7 +97,7 @@ class NotificationService:
             ))
         )
         return result.scalar() or 0
-    
+
     @staticmethod
     async def mark_as_read(
         db: AsyncSession,
@@ -112,15 +112,15 @@ class NotificationService:
             ))
         )
         notification = result.scalar_one_or_none()
-        
+
         if notification and not notification.is_read:
             notification.is_read = True
             notification.read_at = datetime.utcnow()
             await db.commit()
             await db.refresh(notification)
-        
+
         return notification
-    
+
     @staticmethod
     async def mark_all_as_read(db: AsyncSession, user_id: UUID) -> int:
         """Mark all notifications as read."""
@@ -134,7 +134,7 @@ class NotificationService:
         )
         await db.commit()
         return result.rowcount
-    
+
     @staticmethod
     async def delete(
         db: AsyncSession,
@@ -149,14 +149,14 @@ class NotificationService:
             ))
         )
         notification = result.scalar_one_or_none()
-        
+
         if notification:
             await db.delete(notification)
             await db.commit()
             return True
-        
+
         return False
-    
+
     @staticmethod
     async def delete_all(db: AsyncSession, user_id: UUID) -> int:
         """Delete all notifications for user."""
@@ -165,17 +165,17 @@ class NotificationService:
         )
         notifications = result.scalars().all()
         count = len(notifications)
-        
+
         for n in notifications:
             await db.delete(n)
-        
+
         await db.commit()
         return count
-    
+
     # ========================================================================
     # Push Token Management
     # ========================================================================
-    
+
     @staticmethod
     async def register_push_token(
         db: AsyncSession,
@@ -190,7 +190,7 @@ class NotificationService:
             select(PushToken).where(PushToken.token == token)
         )
         existing = result.scalar_one_or_none()
-        
+
         if existing:
             # Update existing token
             existing.user_id = user_id
@@ -200,7 +200,7 @@ class NotificationService:
             await db.commit()
             await db.refresh(existing)
             return existing
-        
+
         # Create new token
         push_token = PushToken(
             user_id=user_id,
@@ -208,13 +208,13 @@ class NotificationService:
             device_type=device_type,
             device_name=device_name
         )
-        
+
         db.add(push_token)
         await db.commit()
         await db.refresh(push_token)
-        
+
         return push_token
-    
+
     @staticmethod
     async def unregister_push_token(
         db: AsyncSession,
@@ -229,14 +229,14 @@ class NotificationService:
             ))
         )
         push_token = result.scalar_one_or_none()
-        
+
         if push_token:
             push_token.is_active = False
             await db.commit()
             return True
-        
+
         return False
-    
+
     @staticmethod
     async def get_user_tokens(db: AsyncSession, user_id: UUID) -> List[PushToken]:
         """Get active push tokens for user."""
@@ -247,11 +247,11 @@ class NotificationService:
             ))
         )
         return result.scalars().all()
-    
+
     # ========================================================================
     # Push Notification Sending (Firebase Cloud Messaging)
     # ========================================================================
-    
+
     @staticmethod
     async def send_push_notification(
         db: AsyncSession,
@@ -262,19 +262,19 @@ class NotificationService:
     ) -> bool:
         """Send push notification via Firebase Cloud Messaging."""
         tokens = await NotificationService.get_user_tokens(db, user_id)
-        
+
         if not tokens:
             logger.debug(f"No push tokens for user {user_id}")
             return False
-        
+
         # Convert data to string values (FCM requirement)
         str_data = None
         if data:
             str_data = {k: str(v) for k, v in data.items()}
-        
+
         # Get token strings
         token_strings = [t.token for t in tokens]
-        
+
         # Send via FCM
         if len(token_strings) == 1:
             # Single token
@@ -295,11 +295,11 @@ class NotificationService:
                 body=body,
                 data=str_data
             )
-            
+
             # Deactivate failed tokens (unregistered devices)
             for failed_token in result.get("failed_tokens", []):
                 await NotificationService._deactivate_token(db, failed_token)
-            
+
             success = result.get("success_count", 0) > 0
             if success:
                 logger.info(
@@ -307,7 +307,7 @@ class NotificationService:
                     f"{result['success_count']}/{len(token_strings)} devices"
                 )
             return success
-    
+
     @staticmethod
     async def _deactivate_token(db: AsyncSession, token: str) -> None:
         """Deactivate a push token that's no longer valid."""
@@ -321,11 +321,11 @@ class NotificationService:
             logger.debug(f"Deactivated invalid push token: {token[:20]}...")
         except Exception as e:
             logger.error(f"Failed to deactivate token: {e}")
-    
+
     # ========================================================================
     # Notification Templates
     # ========================================================================
-    
+
     @staticmethod
     async def notify_order_status(
         db: AsyncSession,
@@ -342,9 +342,9 @@ class NotificationService:
             "delivered": "Your order has been delivered",
             "cancelled": "Your order has been cancelled"
         }
-        
+
         message = status_messages.get(status, f"Order status updated to {status}")
-        
+
         return await NotificationService.create(
             db,
             user_id=user_id,
@@ -354,7 +354,7 @@ class NotificationService:
             reference_type="order",
             data={"order_number": order_number, "status": status}
         )
-    
+
     @staticmethod
     async def notify_payment_success(
         db: AsyncSession,
@@ -372,7 +372,7 @@ class NotificationService:
             reference_type="order",
             data={"order_number": order_number, "amount": amount}
         )
-    
+
     @staticmethod
     async def notify_price_drop(
         db: AsyncSession,
@@ -384,7 +384,7 @@ class NotificationService:
     ) -> Notification:
         """Send price drop notification."""
         drop_percent = ((old_price - new_price) / old_price) * 100
-        
+
         return await NotificationService.create(
             db,
             user_id=user_id,

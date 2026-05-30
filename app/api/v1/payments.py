@@ -1,26 +1,27 @@
 """
 Payment API Endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
 from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
-from app.core.dependencies import get_current_user, get_current_admin
-from app.services.payment_service import PaymentService
-from app.services.order_service import OrderService
+from app.core.dependencies import get_current_admin, get_current_user
+from app.schemas.order import PaymentStatusEnum
 from app.schemas.payment import (
-    CreatePaymentIntentRequest,
     ConfirmPaymentRequest,
+    CreatePaymentIntentRequest,
+    PaymentHistoryResponse,
     RefundRequest,
     SaveCardRequest,
-    SavedCardsListResponse,
     SavedCardResponse,
-    PaymentHistoryResponse,
+    SavedCardsListResponse,
 )
-from app.schemas.order import PaymentStatusEnum
+from app.services.order_service import OrderService
+from app.services.payment_service import PaymentService
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
@@ -45,26 +46,26 @@ async def create_payment_intent(
             UUID(data.order_id),
             current_user.user_id
         )
-        
+
         if not order:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Order not found"
             )
-        
+
         if order.payment_status == "paid":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Order is already paid"
             )
-        
+
         # Create payment intent
         intent = await PaymentService.create_payment_intent(
             amount=order.total_amount,
             currency="inr",
             order_id=str(order.order_id)
         )
-        
+
         return {
             "success": True,
             "data": intent
@@ -94,7 +95,7 @@ async def confirm_payment(
             data.payment_intent_id,
             data.payment_method_id
         )
-        
+
         if result["status"] == "succeeded":
             # Update order payment status
             # Note: In production, get order_id from payment intent metadata
@@ -127,7 +128,7 @@ async def get_payment_status(
     """
     try:
         result = await PaymentService.retrieve_payment_intent(payment_intent_id)
-        
+
         return {
             "success": True,
             "data": result
@@ -156,39 +157,39 @@ async def create_refund(
     try:
         # Get order
         order = await OrderService.get_by_id(db, UUID(data.order_id))
-        
+
         if not order:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Order not found"
             )
-        
+
         if order.payment_status != "paid":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Order has not been paid"
             )
-        
+
         if not order.payment_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No payment ID found for this order"
             )
-        
+
         # Create refund
         refund_amount = Decimal(str(data.amount)) if data.amount else order.total_amount
-        
+
         result = await PaymentService.create_refund(
             payment_intent_id=order.payment_id,
             amount=refund_amount,
             reason=data.reason
         )
-        
+
         # Update order status
         await OrderService.update_payment_status(
             db, order, PaymentStatusEnum.REFUNDED
         )
-        
+
         return {
             "success": True,
             "data": {
@@ -221,7 +222,7 @@ async def get_saved_cards(
     """
     try:
         cards = await PaymentService.get_saved_cards(str(current_user.user_id))
-        
+
         return SavedCardsListResponse(
             success=True,
             cards=[SavedCardResponse(**card) for card in cards]
@@ -248,7 +249,7 @@ async def save_card(
             payment_method_id=data.payment_method_id,
             set_default=data.set_default
         )
-        
+
         return {
             "success": True,
             "data": card,
@@ -275,7 +276,7 @@ async def delete_saved_card(
             user_id=str(current_user.user_id),
             card_id=card_id
         )
-        
+
         return {
             "success": True,
             "message": "Card deleted successfully"
@@ -300,7 +301,7 @@ async def get_payment_history(
         payments = await PaymentService.get_payment_history(
             str(current_user.user_id), db
         )
-        
+
         return PaymentHistoryResponse(
             success=True,
             payments=payments,
@@ -329,28 +330,28 @@ async def stripe_webhook(
     try:
         payload = await request.body()
         signature = request.headers.get("stripe-signature", "")
-        
+
         result = await PaymentService.handle_webhook(payload, signature)
-        
+
         # Handle different event types
         event_type = result.get("event_type")
-        
+
         if event_type == "payment_intent.succeeded":
             # Update order payment status
             logger.info("Payment succeeded webhook received")
             # Extract order_id from event metadata and update
             pass
-        
+
         elif event_type == "payment_intent.payment_failed":
             logger.info("Payment failed webhook received")
             pass
-        
+
         elif event_type == "charge.refunded":
             logger.info("Refund webhook received")
             pass
-        
+
         return {"received": True}
-    
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
