@@ -11,11 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import create_token_pair, hash_password, verify_password
 from app.models.admin import Admin, AdminRole, AdminSession
 from app.schemas.admin_auth import (
+    AdminAuthData,
     AdminAuthResponse,
     AdminListResponse,
     AdminProfileResponse,
     AdminResponse,
-    AdminTokensResponse,
     CreateAdminRequest,
 )
 from app.utils.logger import logger
@@ -78,20 +78,19 @@ class AdminAuthService:
         return AdminAuthResponse(
             success=True,
             message="Login successful",
-            admin=AdminResponse(
-                admin_id=admin.admin_id,
-                email=admin.email,
-                full_name=admin.full_name,
-                role=admin.role,
-                branch_id=admin.branch_id,
-                is_active=admin.is_active,
-                last_login=admin.last_login,
-                created_at=admin.created_at,
-            ),
-            tokens=AdminTokensResponse(
-                access_token=tokens["access_token"],
-                refresh_token=tokens["refresh_token"],
-            ),
+            data=AdminAuthData(
+                admin=AdminResponse(
+                    admin_id=admin.admin_id,
+                    email=admin.email,
+                    full_name=admin.full_name,
+                    role=admin.role,
+                    branch_id=admin.branch_id,
+                    is_active=admin.is_active,
+                    last_login=admin.last_login,
+                    created_at=admin.created_at,
+                ),
+                token=tokens["access_token"],
+            )
         )
 
     @staticmethod

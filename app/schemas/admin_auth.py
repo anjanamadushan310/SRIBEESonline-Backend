@@ -60,12 +60,15 @@ class AdminTokensResponse(BaseModel):
         populate_by_name = True
 
 
+class AdminAuthData(BaseModel):
+    admin: AdminResponse
+    token: str
+
 class AdminAuthResponse(BaseModel):
     """Admin authentication response."""
     success: bool = True
     message: str
-    admin: AdminResponse
-    tokens: AdminTokensResponse
+    data: AdminAuthData
 
 
 class AdminProfileResponse(BaseModel):
