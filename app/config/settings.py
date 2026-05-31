@@ -173,11 +173,12 @@ class Settings(BaseSettings):
     def parse_cors_origins(cls, v):
         """Parse CORS origins from string or list."""
         if isinstance(v, str):
+            v = v.strip("'\"").strip()
             import json
             try:
                 return json.loads(v)
             except json.JSONDecodeError:
-                return [origin.strip() for origin in v.split(",")]
+                return [origin.strip("'\"[] ") for origin in v.split(",")]
         return v
 
     # =========================================================================

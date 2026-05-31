@@ -132,6 +132,8 @@ class TrustedHostMiddleware(BaseHTTPMiddleware):
         "www.sribeesonline.lk",
         "api.sribeesonline.lk",
         "admin.sribeesonline.lk",
+        "api.sribees.com",
+        "sribees.com",
     }
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
