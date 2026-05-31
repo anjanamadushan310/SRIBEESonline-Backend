@@ -91,29 +91,31 @@ async def init_db() -> None:
     try:
         # Import all models to ensure they are registered with SQLAlchemy Base metadata
         import app.models  # noqa
-        
+
         async with engine.begin() as conn:
             # Test connection using text() for raw SQL
             from sqlalchemy import text
             await conn.execute(text("SELECT 1"))
-            
+
             # Create all tables if they do not exist
             await conn.run_sync(Base.metadata.create_all)
-            
+
         logger.info("✅ PostgreSQL connected and tables initialized successfully")
-        
+
         # Seed default super admin user if not present
         async with get_db_context() as db:
-            from sqlalchemy import select
-            from app.models.admin import Admin, AdminRole
-            from app.core.security import hash_password
             from uuid import uuid4
-            
+
+            from sqlalchemy import select
+
+            from app.core.security import hash_password
+            from app.models.admin import Admin, AdminRole
+
             # Check if superadmin already exists
             email = "superadmin@freshcart.lk"
             result = await db.execute(select(Admin).where(Admin.email == email))
             existing_admin = result.scalar_one_or_none()
-            
+
             if not existing_admin:
                 logger.info("Seeding default super admin user...")
                 super_admin = Admin(
@@ -127,7 +129,7 @@ async def init_db() -> None:
                 db.add(super_admin)
                 await db.commit()
                 logger.info("✅ Default super admin seeded successfully!")
-            
+
     except Exception as e:
         logger.error(f"❌ PostgreSQL connection/initialization failed: {e}")
         raise
