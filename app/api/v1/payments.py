@@ -23,7 +23,48 @@ from app.schemas.payment import (
 from app.services.order_service import OrderService
 from app.services.payment_service import PaymentService
 
-router = APIRouter(prefix="/payments", tags=["Payments"])
+# Prefix "/payments" is applied by app/api/v1/router.py — do not repeat it here.
+router = APIRouter(tags=["Payments"])
+
+# ============================================================================
+# Payment Methods (Module 13.1) — mounted separately at "/payment-methods".
+#
+# MVP: external card/gateway is on hold, so we expose a static list of the two
+# supported methods (Cash on Delivery + internal Wallet). Kept as a constant so
+# it can later be swapped for a DB-backed PaymentMethod table without changing
+# the endpoint contract.
+# ============================================================================
+methods_router = APIRouter(tags=["Payment Methods"])
+
+_SUPPORTED_PAYMENT_METHODS = [
+    {
+        "id": "cod",
+        "code": "COD",
+        "name": "Cash on Delivery",
+        "type": "OFFLINE",
+        "is_active": True,
+    },
+    {
+        "id": "wallet",
+        "code": "WALLET",
+        "name": "SRIBEES Wallet",
+        "type": "WALLET",
+        "is_active": True,
+    },
+]
+
+
+@methods_router.get("", response_model=dict, summary="List supported payment methods")
+async def list_payment_methods(
+    current_user=Depends(get_current_user),
+):
+    """
+    Return the active payment methods available at checkout.
+
+    For the MVP this is Cash on Delivery and the internal SRIBEES Wallet.
+    """
+    active = [m for m in _SUPPORTED_PAYMENT_METHODS if m["is_active"]]
+    return {"success": True, "data": {"methods": active}}
 
 
 # ============================================================================

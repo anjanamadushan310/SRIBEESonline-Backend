@@ -6,12 +6,10 @@ import time
 from typing import Any, Dict, Optional
 
 from app.config.redis import RedisKeys, get_redis_client
+from app.services.pricing_service import PricingService
 
 # Constants
 CART_TTL = 30 * 24 * 60 * 60  # 30 days in seconds
-TAX_RATE = 0.08  # 8% tax
-FREE_SHIPPING_THRESHOLD = 50.0
-SHIPPING_COST = 5.99
 
 
 def _get_redis():
@@ -32,33 +30,23 @@ class CartService:
 
     @staticmethod
     def _calculate_totals(items: list, coupon: Optional[Dict] = None) -> Dict[str, float]:
-        """Calculate cart totals."""
-        subtotal = sum(item["price"] * item["quantity"] for item in items)
+        """
+        Calculate cart totals.
 
-        # Calculate discount
-        discount = 0.0
-        if coupon:
-            if coupon["discount_type"] == "percentage":
-                discount = subtotal * (coupon["discount_value"] / 100)
-            else:  # fixed
-                discount = min(coupon["discount_value"], subtotal)
-
-        # Calculate tax (on discounted amount)
-        taxable_amount = subtotal - discount
-        tax = taxable_amount * TAX_RATE
-
-        # Calculate shipping
-        shipping = 0.0 if taxable_amount >= FREE_SHIPPING_THRESHOLD else SHIPPING_COST
-
-        # Total
-        total = taxable_amount + tax + shipping
-
+        Delegates to the shared ``PricingService`` (the single source of truth)
+        so the totals returned by GET /cart match the checkout quote and the
+        final order exactly. Wallet deduction is a checkout-only concept and is
+        never applied here.
+        """
+        breakdown = PricingService.quote(items=items, coupon=coupon, use_wallet=False)
         return {
-            "subtotal": round(subtotal, 2),
-            "discount": round(discount, 2),
-            "tax": round(tax, 2),
-            "shipping": round(shipping, 2),
-            "total": round(total, 2)
+            "subtotal": float(breakdown.subtotal),
+            "discount": float(breakdown.discount),
+            "tax": float(breakdown.tax),
+            # Cart uses the legacy "shipping" key; value is the authoritative
+            # delivery fee from PricingService.
+            "shipping": float(breakdown.delivery_fee),
+            "total": float(breakdown.total),
         }
 
     @staticmethod

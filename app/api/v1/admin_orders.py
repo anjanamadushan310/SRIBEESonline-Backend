@@ -1,0 +1,344 @@
+"""
+Admin Order Management API (Module 7.3)
+
+Branch-scoped order operations. Restricted to super_admin, branch_manager and
+customer_support (enforced at the router level). Branch isolation is applied
+via ``inject_branch_filter`` — a Branch Manager only sees/edits orders whose
+``branch_id`` matches their assigned branch; a Super Admin sees all branches
+(optionally narrowed by ``?branch_id=``).
+
+Prefix "/admin/orders" is applied by app/api/v1/router.py.
+"""
+from typing import Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
+from loguru import logger
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.config.database import get_db
+from app.core.dependencies import BranchScope, inject_branch_filter, require_roles
+from app.models.branch import Branch
+from app.models.order import Order
+from app.models.user import User
+from app.schemas.order import OrderStatusEnum, UpdateOrderStatusRequest
+from app.services.invoice_service import InvoiceService
+from app.services.notification_service import NotificationService
+from app.services.order_service import OrderService
+
+router = APIRouter(
+    dependencies=[Depends(require_roles("super_admin", "branch_manager", "customer_support"))],
+    tags=["Admin Orders"],
+)
+
+# Statuses whose transition triggers a customer notification.
+_NOTIFY_STATUSES = {OrderStatusEnum.SHIPPED, OrderStatusEnum.DELIVERED}
+
+
+def _format_order_row(order: Order, customer: Optional[User], branch_name: Optional[str]) -> dict:
+    """Slim order representation for the list view."""
+    return {
+        "order_id": str(order.order_id),
+        "order_number": order.order_number,
+        "user_id": str(order.user_id),
+        "customer_name": (customer.full_name if customer else None),
+        "customer_email": (customer.email if customer else None),
+        "branch_id": str(order.branch_id) if order.branch_id else None,
+        "branch_name": branch_name,
+        "status": order.status,
+        "payment_status": order.payment_status,
+        "total_amount": float(order.total_amount or 0),
+        "item_count": len(order.items) if order.items is not None else 0,
+        "created_at": order.created_at.isoformat() if order.created_at else None,
+    }
+
+
+def _format_order_detail(order: Order, branch_name: Optional[str]) -> dict:
+    """Full order representation: items, pricing breakdown, customer, address."""
+    customer = order.user
+    addr = order.delivery_address
+    return {
+        "order_id": str(order.order_id),
+        "order_number": order.order_number,
+        "status": order.status,
+        "payment_status": order.payment_status,
+        "payment_method": order.payment_method,
+        "branch_id": str(order.branch_id) if order.branch_id else None,
+        "branch_name": branch_name,
+        "created_at": order.created_at.isoformat() if order.created_at else None,
+        "shipped_at": order.shipped_at.isoformat() if order.shipped_at else None,
+        "delivered_at": order.delivered_at.isoformat() if order.delivered_at else None,
+        "delivery_slot_date": order.delivery_slot_date.isoformat() if order.delivery_slot_date else None,
+        "delivery_slot_time": order.delivery_slot_time,
+        "notes": order.notes,
+        # Returns & refunds (Module 5.5)
+        "return_reason": order.return_reason,
+        "return_comments": order.return_comments,
+        "return_items": order.return_items,
+        "return_requested_at": order.return_requested_at.isoformat() if order.return_requested_at else None,
+        "refund_amount": float(order.refund_amount) if order.refund_amount is not None else None,
+        "customer": {
+            "user_id": str(customer.user_id),
+            "full_name": customer.full_name,
+            "email": customer.email,
+            "phone": customer.phone,
+        } if customer else None,
+        "delivery_address": {
+            "address_line1": addr.address_line1,
+            "address_line2": addr.address_line2,
+            "post_office": addr.post_office,
+            "district": addr.district,
+            "province": addr.province,
+            "postal_code": addr.postal_code,
+        } if addr else None,
+        "items": [
+            {
+                "order_item_id": str(it.order_item_id),
+                "product_id": str(it.product_id),
+                "product_name": it.product_name,
+                "product_sku": it.product_sku,
+                "product_image": it.product_image,
+                "quantity": it.quantity,
+                "unit_price": float(it.unit_price or 0),
+                "subtotal": float(it.subtotal or 0),
+            }
+            for it in (order.items or [])
+        ],
+        "pricing": {
+            "subtotal": float(order.subtotal or 0),
+            "tax_amount": float(order.tax_amount or 0),
+            "shipping_amount": float(order.shipping_amount or 0),
+            "discount_amount": float(order.discount_amount or 0),
+            "wallet_deduction": float(order.wallet_deduction or 0),
+            "cashback_earned": float(order.cashback_earned or 0),
+            "total_amount": float(order.total_amount or 0),
+        },
+    }
+
+
+async def _branch_name(db: AsyncSession, branch_id: Optional[UUID]) -> Optional[str]:
+    if branch_id is None:
+        return None
+    return (
+        await db.execute(select(Branch.name).where(Branch.branch_id == branch_id))
+    ).scalar_one_or_none()
+
+
+@router.get("", response_model=dict)
+async def list_orders(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    order_status: Optional[OrderStatusEnum] = Query(None, description="Filter by order status"),
+    search: Optional[str] = Query(None, description="Match order number, customer name or email"),
+    branch_id: Optional[UUID] = Query(
+        None, description="Super Admin only: narrow to a branch (ignored for scoped admins)"
+    ),
+    db: AsyncSession = Depends(get_db),
+    scope: BranchScope = Depends(inject_branch_filter),
+):
+    """Paginated, branch-scoped order list."""
+    effective_branch = scope.resolve(branch_id)
+    offset = (page - 1) * limit
+
+    query = (
+        select(Order)
+        .options(selectinload(Order.items), selectinload(Order.user))
+        .join(User, Order.user_id == User.user_id)
+    )
+
+    if effective_branch is not None:
+        query = query.where(Order.branch_id == effective_branch)
+    if order_status is not None:
+        query = query.where(Order.status == order_status.value)
+    if search:
+        pattern = f"%{search}%"
+        query = query.where(
+            or_(
+                Order.order_number.ilike(pattern),
+                User.full_name.ilike(pattern),
+                User.email.ilike(pattern),
+            )
+        )
+
+    total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar() or 0
+
+    query = query.order_by(Order.created_at.desc()).limit(limit).offset(offset)
+    orders = (await db.execute(query)).scalars().unique().all()
+
+    # Resolve branch names in one query for the page.
+    branch_ids = {o.branch_id for o in orders if o.branch_id}
+    names: dict[UUID, str] = {}
+    if branch_ids:
+        rows = (
+            await db.execute(select(Branch.branch_id, Branch.name).where(Branch.branch_id.in_(branch_ids)))
+        ).all()
+        names = {bid: name for bid, name in rows}
+
+    return {
+        "success": True,
+        "data": {
+            "orders": [_format_order_row(o, o.user, names.get(o.branch_id)) for o in orders],
+            "pagination": {
+                "total": total,
+                "page": page,
+                "limit": limit,
+                "total_pages": (total + limit - 1) // limit if limit else 1,
+            },
+            "scope": {
+                "is_super_admin": scope.is_super_admin,
+                "branch_id": str(effective_branch) if effective_branch else None,
+            },
+        },
+    }
+
+
+async def _load_scoped_order(db: AsyncSession, order_id: UUID, scope: BranchScope) -> Order:
+    """Fetch an order with relations, enforcing branch isolation."""
+    order = (
+        await db.execute(
+            select(Order)
+            .options(
+                selectinload(Order.items),
+                selectinload(Order.delivery_address),
+                selectinload(Order.user),
+            )
+            .where(Order.order_id == order_id)
+        )
+    ).scalar_one_or_none()
+
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+
+    # A scoped admin can only touch orders in their own branch.
+    if not scope.is_super_admin and order.branch_id != scope.branch_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This order belongs to another branch.",
+        )
+    return order
+
+
+@router.get("/{order_id}", response_model=dict)
+async def get_order(
+    order_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    scope: BranchScope = Depends(inject_branch_filter),
+):
+    """Full order details (items, pricing, customer, delivery address)."""
+    order = await _load_scoped_order(db, order_id, scope)
+    branch_name = await _branch_name(db, order.branch_id)
+    return {"success": True, "data": _format_order_detail(order, branch_name)}
+
+
+@router.get("/{order_id}/invoice")
+async def download_order_invoice(
+    order_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    scope: BranchScope = Depends(inject_branch_filter),
+):
+    """
+    Download the PDF invoice for an order (branch-scoped, Module 5.6).
+    """
+    order = await _load_scoped_order(db, order_id, scope)
+    try:
+        pdf = InvoiceService.generate_invoice_pdf(order, customer=order.user)
+    except RuntimeError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error generating invoice for order {order_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate invoice",
+        )
+
+    filename = InvoiceService.filename_for(order)
+    return StreamingResponse(
+        iter([pdf]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.patch("/{order_id}/status", response_model=dict)
+async def update_order_status(
+    order_id: UUID,
+    body: UpdateOrderStatusRequest,
+    db: AsyncSession = Depends(get_db),
+    scope: BranchScope = Depends(inject_branch_filter),
+):
+    """
+    Update an order's status. On transition to SHIPPED or DELIVERED, notify the
+    customer via NotificationService (best-effort — never blocks the update).
+    """
+    order = await _load_scoped_order(db, order_id, scope)
+
+    await OrderService.update_status(db, order, body.status)
+
+    if body.status in _NOTIFY_STATUSES:
+        try:
+            await NotificationService.notify_order_status(
+                db,
+                user_id=order.user_id,
+                order_number=order.order_number,
+                status=body.status.value,
+            )
+        except Exception as exc:  # pragma: no cover - notification is best-effort
+            logger.warning(f"Order status notification failed for {order.order_number}: {exc}")
+
+    branch_name = await _branch_name(db, order.branch_id)
+    logger.info(f"[admin] Order {order.order_number} status -> {body.status.value}")
+    return {
+        "success": True,
+        "data": _format_order_detail(order, branch_name),
+        "message": f"Order status updated to {body.status.value}",
+    }
+
+
+@router.post("/{order_id}/return/approve", response_model=dict)
+async def approve_order_return(
+    order_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    scope: BranchScope = Depends(inject_branch_filter),
+):
+    """
+    Approve a pending return: credit the returned value to the customer's wallet
+    and move the order to REFUNDED (atomic; branch-scoped).
+    """
+    order = await _load_scoped_order(db, order_id, scope)
+    try:
+        await OrderService.approve_return(db, order)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    branch_name = await _branch_name(db, order.branch_id)
+    logger.info(f"[admin] Return approved for order {order.order_number}")
+    return {
+        "success": True,
+        "data": _format_order_detail(order, branch_name),
+        "message": "Return approved and customer wallet credited",
+    }
+
+
+@router.post("/{order_id}/return/reject", response_model=dict)
+async def reject_order_return(
+    order_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    scope: BranchScope = Depends(inject_branch_filter),
+):
+    """Reject a pending return: revert the order to DELIVERED (branch-scoped)."""
+    order = await _load_scoped_order(db, order_id, scope)
+    try:
+        await OrderService.reject_return(db, order)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    branch_name = await _branch_name(db, order.branch_id)
+    logger.info(f"[admin] Return rejected for order {order.order_number}")
+    return {
+        "success": True,
+        "data": _format_order_detail(order, branch_name),
+        "message": "Return rejected",
+    }

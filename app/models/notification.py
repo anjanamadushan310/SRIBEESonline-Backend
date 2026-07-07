@@ -58,7 +58,7 @@ class Notification(Base):
 
 
 class PushToken(Base):
-    """User push notification token (Expo)."""
+    """User push notification token (FCM device token)."""
 
     __tablename__ = "push_tokens"
 
@@ -67,6 +67,9 @@ class PushToken(Base):
     token = Column(String(255), unique=True, nullable=False)
     device_type = Column(String(50), nullable=True)  # ios, android
     device_name = Column(String(100), nullable=True)
+    # Stable per-install device identifier. Lets a device that rotated its FCM
+    # token update its existing row instead of leaving a stale one behind.
+    device_id = Column(String(255), nullable=True, index=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

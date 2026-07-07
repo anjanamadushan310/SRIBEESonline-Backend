@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ============================================================================
 # Enums
@@ -50,6 +50,28 @@ class RegisterPushTokenRequest(BaseModel):
     token: str
     device_type: Optional[str] = None  # ios, android
     device_name: Optional[str] = None
+
+
+class PushTokenRegisterRequest(BaseModel):
+    """
+    Register/refresh an FCM device token (POST /notifications/push/token).
+
+    `platform` is 'android' or 'ios'; `device_id` is an optional stable device
+    identifier used to upsert the row when the FCM token rotates.
+    """
+    token: str = Field(..., min_length=1)
+    platform: Optional[str] = None
+    device_id: Optional[str] = None
+
+    @field_validator("platform")
+    @classmethod
+    def normalize_platform(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        normalized = v.strip().lower()
+        if normalized not in {"android", "ios"}:
+            raise ValueError("platform must be 'android' or 'ios'")
+        return normalized
 
 
 # ============================================================================

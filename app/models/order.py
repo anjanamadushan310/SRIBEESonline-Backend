@@ -14,7 +14,7 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
 from app.config.database import Base
@@ -29,6 +29,9 @@ class OrderStatus(str, enum.Enum):
     OUT_FOR_DELIVERY = "out_for_delivery"
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
+    # Post-delivery returns flow (Module 5.5)
+    RETURN_REQUESTED = "return_requested"
+    RETURN_APPROVED = "return_approved"
     REFUNDED = "refunded"
 
 
@@ -49,11 +52,24 @@ class Order(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False)
     order_number = Column(String(50), unique=True, nullable=False)
 
+    # Fulfilling branch, resolved from the delivery address's post office at
+    # checkout. Nullable: legacy/unmapped orders have no branch and are only
+    # visible to Super Admins in the admin dashboard.
+    branch_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.branch_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Amounts
     subtotal = Column(Numeric(10, 2), nullable=False)
     tax_amount = Column(Numeric(10, 2), default=0)
     shipping_amount = Column(Numeric(10, 2), default=0)
     discount_amount = Column(Numeric(10, 2), default=0)
+    # Wallet balance applied to this order + cashback credited for it.
+    wallet_deduction = Column(Numeric(10, 2), default=0)
+    cashback_earned = Column(Numeric(10, 2), default=0)
     total_amount = Column(Numeric(10, 2), nullable=False)
 
     # Status
@@ -71,6 +87,14 @@ class Order(Base):
     coupon_code = Column(String(50), nullable=True)
     notes = Column(Text, nullable=True)
 
+    # Returns & refunds (Module 5.5). return_items is a JSON list of
+    # {"order_item_id": "...", "quantity": N}; empty/NULL means a full return.
+    return_reason = Column(String(255), nullable=True)
+    return_comments = Column(Text, nullable=True)
+    return_items = Column(JSONB, nullable=True)
+    return_requested_at = Column(DateTime(timezone=True), nullable=True)
+    refund_amount = Column(Numeric(10, 2), nullable=True)
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -82,6 +106,7 @@ class Order(Base):
     user = relationship("User", back_populates="orders")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
     delivery_address = relationship("Address")
+    branch = relationship("Branch")
 
     def __repr__(self):
         return f"<Order {self.order_number}>"

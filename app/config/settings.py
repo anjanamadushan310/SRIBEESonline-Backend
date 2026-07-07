@@ -35,6 +35,32 @@ class Settings(BaseSettings):
     api_version: str = Field(default="v1", description="API version prefix")
 
     # =========================================================================
+    # Wallet & Cashback
+    # =========================================================================
+    cashback_rate: float = Field(
+        default=0.10,
+        ge=0.0,
+        le=1.0,
+        description="Flat cashback rate earned on the order subtotal (0.10 = 10%)",
+    )
+    wallet_currency: str = Field(default="LKR", description="Wallet currency code")
+
+    # =========================================================================
+    # Order Pricing
+    # =========================================================================
+    flat_delivery_fee: float = Field(
+        default=350.0,
+        ge=0.0,
+        description="Flat delivery fee applied to non-empty carts (LKR)",
+    )
+    order_tax_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Tax rate applied to the discounted subtotal (0.0 = none)",
+    )
+
+    # =========================================================================
     # Sentry Error Tracking
     # =========================================================================
     sentry_dsn: Optional[str] = Field(default=None, description="Sentry DSN for error tracking")

@@ -215,6 +215,57 @@ RequireInventory = Depends(require_roles("super_admin", "branch_manager", "inven
 
 
 # ============================================================================
+# Branch Isolation
+# ============================================================================
+
+class BranchScope:
+    """
+    Resolved branch-visibility scope for an authenticated admin.
+
+    - Super Admins are *unscoped* (``is_super_admin=True``, ``branch_id`` may be
+      None) and can see every branch's data.
+    - All other admins are pinned to their assigned ``branch_id``; queries must
+      filter on it so a Branch Manager only ever sees their own branch.
+    """
+
+    def __init__(self, is_super_admin: bool, branch_id: Optional[UUID]):
+        self.is_super_admin = is_super_admin
+        self.branch_id = branch_id
+
+    def resolve(self, requested_branch_id: Optional[UUID] = None) -> Optional[UUID]:
+        """
+        Return the branch_id a query should filter on (None = all branches).
+
+        Super Admins may optionally narrow to ``requested_branch_id``; scoped
+        admins always resolve to their own branch regardless of the request.
+        """
+        if self.is_super_admin:
+            return requested_branch_id
+        return self.branch_id
+
+
+async def inject_branch_filter(
+    admin: Annotated[dict, Depends(get_current_admin)],
+) -> BranchScope:
+    """
+    Branch-isolation dependency.
+
+    Yields a :class:`BranchScope` describing what the current admin may see.
+    Non-super admins without an assigned branch are rejected — they have no
+    valid scope to operate within.
+    """
+    role = admin.role.value if hasattr(admin.role, "value") else admin.role
+    is_super = role == "super_admin"
+
+    if not is_super and admin.branch_id is None:
+        raise InsufficientPermissionsError(
+            message="Your admin account is not assigned to a branch.",
+        )
+
+    return BranchScope(is_super_admin=is_super, branch_id=admin.branch_id)
+
+
+# ============================================================================
 # Pagination Dependencies
 # ============================================================================
 

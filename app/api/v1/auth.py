@@ -4,10 +4,14 @@ FreshCart FastAPI Backend - Auth Endpoints
 Authentication routes for customer users.
 """
 from fastapi import APIRouter, Depends, status
+from redis.asyncio import Redis
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
+from app.config.redis import RedisTTL, get_redis
 from app.core.dependencies import CurrentUser
+from app.models.user import User
 from app.schemas.auth import (
     AuthResponse,
     ChangePasswordRequest,
@@ -19,12 +23,17 @@ from app.schemas.auth import (
     RefreshTokenResponse,
     RegisterRequest,
     RegisterResponse,
+    RequestOTPResponse,
     ResendVerificationRequest,
     ResetPasswordRequest,
     SessionsListResponse,
+    UpdateProfileRequest,
     VerifyEmailRequest,
+    VerifyOTPRequest,
+    VerifyOTPResponse,
 )
 from app.services.auth_service import AuthService
+from app.services.otp_service import OTPService
 
 router = APIRouter()
 
@@ -115,6 +124,66 @@ async def resend_verification(
 
 
 @router.post(
+    "/request-otp",
+    response_model=RequestOTPResponse,
+    summary="Request a phone verification OTP",
+    description=(
+        "Generates a 6-digit code for the authenticated user's phone, stores it "
+        "in Redis for 3 minutes, and dispatches it (mock SMS → server log)."
+    ),
+)
+async def request_otp(
+    current_user: CurrentUser,
+    redis: Redis = Depends(get_redis),
+) -> RequestOTPResponse:
+    """Generate + 'send' a phone-verification OTP for the current user."""
+    await OTPService.request_otp(
+        redis,
+        user_id=str(current_user.user_id),
+        phone=current_user.phone or "",
+    )
+    return RequestOTPResponse(
+        message="Verification code sent",
+        expires_in_seconds=RedisTTL.PHONE_OTP,
+    )
+
+
+@router.post(
+    "/verify-otp",
+    response_model=VerifyOTPResponse,
+    summary="Verify a phone OTP",
+    description=(
+        "Validates the 6-digit code against Redis. On success, marks the user's "
+        "phone as verified."
+    ),
+)
+async def verify_otp(
+    data: VerifyOTPRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+) -> VerifyOTPResponse:
+    """Verify the OTP and set is_phone_verified=True on success."""
+    from fastapi import HTTPException
+
+    ok = await OTPService.verify_otp(redis, str(current_user.user_id), data.code)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification code.",
+        )
+
+    await db.execute(
+        update(User)
+        .where(User.user_id == current_user.user_id)
+        .values(is_phone_verified=True)
+    )
+    await db.commit()
+
+    return VerifyOTPResponse(is_phone_verified=True, message="Phone number verified")
+
+
+@router.post(
     "/forgot-password",
     response_model=MessageResponse,
     summary="Request password reset",
@@ -156,10 +225,16 @@ async def reset_password(
 
 
 @router.post(
-    "/refresh-token",
+    "/refresh",
     response_model=RefreshTokenResponse,
     summary="Refresh access token",
     description="Get new access token using refresh token.",
+)
+@router.post(
+    "/refresh-token",
+    response_model=RefreshTokenResponse,
+    summary="Refresh access token (legacy path)",
+    description="Alias of /refresh kept for backwards compatibility.",
 )
 async def refresh_token(
     data: RefreshTokenRequest,
@@ -170,7 +245,8 @@ async def refresh_token(
 
     - **refresh_token**: Valid refresh token
 
-    Returns new access and refresh tokens.
+    Returns new access and refresh tokens nested under `tokens`, in the same
+    structure as the login/register responses.
     """
     return await AuthService.refresh_token(data.refresh_token, db)
 
@@ -251,6 +327,29 @@ async def get_profile(
     Returns full user profile data.
     """
     return await AuthService.get_profile(current_user, db)
+
+
+@router.patch(
+    "/me",
+    response_model=ProfileResponse,
+    summary="Update current user profile",
+    description="Partially update the authenticated user's profile.",
+)
+async def update_profile(
+    data: UpdateProfileRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ProfileResponse:
+    """
+    Update current user's profile.
+
+    - **full_name**: Single full-name field (matches `users.full_name`)
+    - **phone**: Phone number
+    - **profile_picture_url**: Avatar URL
+
+    Only the fields provided are updated. Returns the updated profile.
+    """
+    return await AuthService.update_profile(current_user, data, db)
 
 
 @router.get(

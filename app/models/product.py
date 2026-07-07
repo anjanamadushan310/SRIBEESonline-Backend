@@ -124,7 +124,21 @@ class BranchInventory(Base):
     stock_quantity = Column(
         Integer,
         default=0,
-        comment="Branch-level stock",
+        comment="Branch-level stock on hand",
+    )
+    reserved_quantity = Column(
+        Integer,
+        default=0,
+        nullable=False,
+        server_default="0",
+        comment="Units reserved by pending orders (available = stock - reserved)",
+    )
+    low_stock_threshold = Column(
+        Integer,
+        default=10,
+        nullable=False,
+        server_default="10",
+        comment="Branch-level low-stock alert threshold",
     )
     discount_percentage = Column(
         Float,
@@ -259,6 +273,11 @@ class Review(Base):
     # Relationships
     product = relationship("Product", back_populates="reviews")
     user = relationship("User", back_populates="reviews")
+
+    # Enforce one review per (product, user) at the database level.
+    __table_args__ = (
+        UniqueConstraint("product_id", "user_id", name="uq_product_user_review"),
+    )
 
     def __repr__(self):
         return f"<Review {self.review_id}>"

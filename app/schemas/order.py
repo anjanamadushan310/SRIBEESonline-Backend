@@ -6,11 +6,17 @@ from decimal import Decimal
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ============================================================================
 # Enums
 # ============================================================================
+
+
+class PaymentMethodEnum(str, Enum):
+    """Payment methods supported for the MVP (COD + internal wallet)."""
+    COD = "COD"
+    WALLET = "WALLET"
 
 class OrderStatusEnum(str, Enum):
     PENDING = "pending"
@@ -20,6 +26,8 @@ class OrderStatusEnum(str, Enum):
     OUT_FOR_DELIVERY = "out_for_delivery"
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
+    RETURN_REQUESTED = "return_requested"
+    RETURN_APPROVED = "return_approved"
     REFUNDED = "refunded"
 
 
@@ -76,6 +84,15 @@ class DeliveryAddressSchema(BaseModel):
     province: str
 
 
+class OrderStatusStep(BaseModel):
+    """A single step in the order status timeline."""
+    status: str
+    label: str
+    timestamp: Optional[datetime] = None
+    completed: bool = False
+    current: bool = False
+
+
 # ============================================================================
 # Order Request Schemas
 # ============================================================================
@@ -85,9 +102,52 @@ class CreateOrderRequest(BaseModel):
     delivery_address_id: str
     delivery_slot_date: Optional[datetime] = None
     delivery_slot_time: Optional[str] = None
-    payment_method: str = "cod"  # cod, card, upi
+    # MVP payment methods: COD (Cash on Delivery) or WALLET. Card/UPI are on hold.
+    payment_method: str = "COD"
     coupon_code: Optional[str] = None
+    # When true, the available wallet balance is applied to reduce the total.
+    use_wallet: bool = False
     notes: Optional[str] = None
+
+    @field_validator("payment_method")
+    @classmethod
+    def validate_payment_method(cls, v: str) -> str:
+        """Accept only COD/WALLET (case-insensitive); reject anything else."""
+        normalized = (v or "").strip().upper()
+        allowed = {m.value for m in PaymentMethodEnum}
+        if normalized not in allowed:
+            raise ValueError(
+                f"payment_method must be one of {sorted(allowed)} (got '{v}')"
+            )
+        return normalized
+
+
+class QuoteOrderRequest(BaseModel):
+    """
+    Request to preview order totals without persisting anything.
+
+    Mirrors the pricing-relevant fields of CreateOrderRequest. The coupon and
+    cart contents are read from the user's server-side cart; `coupon_code` is
+    accepted for API symmetry/forward-compat but the applied cart coupon is
+    authoritative.
+    """
+    delivery_address_id: Optional[str] = None
+    use_wallet: bool = False
+    coupon_code: Optional[str] = None
+
+
+class ReturnItemSchema(BaseModel):
+    """A single order item being returned."""
+    order_item_id: str
+    quantity: int = Field(..., ge=1)
+
+
+class ReturnRequest(BaseModel):
+    """Customer request to return a delivered order (Module 5.5)."""
+    reason: str = Field(..., min_length=1, max_length=255)
+    comments: Optional[str] = None
+    # Optional item-level selection; empty means a full-order return.
+    items: List[ReturnItemSchema] = Field(default_factory=list)
 
 
 class UpdateOrderStatusRequest(BaseModel):
@@ -129,6 +189,8 @@ class OrderResponse(BaseModel):
     tax_amount: float
     shipping_amount: float
     discount_amount: float
+    wallet_deduction: float = 0
+    cashback_earned: float = 0
     total_amount: float
 
     # Status
@@ -148,6 +210,10 @@ class OrderResponse(BaseModel):
 
     # Items
     items: List[OrderItemResponse] = []
+    item_count: int = 0
+
+    # Status timeline (derived from status + timestamps)
+    status_timeline: List[OrderStatusStep] = []
 
     # Timestamps
     created_at: datetime
@@ -176,3 +242,26 @@ class OrderCreateResponse(BaseModel):
     success: bool = True
     data: OrderResponse
     message: str = "Order placed successfully"
+
+
+class OrderQuoteBreakdown(BaseModel):
+    """Authoritative, server-calculated financial breakdown (no persistence)."""
+    subtotal: float
+    delivery_fee: float
+    discount: float
+    tax: float
+    wallet_deduction: float
+    cashback_earned: float
+    total: float
+    # Context so the client can render wallet UI without a second call.
+    currency: str = "LKR"
+    cashback_rate: float
+    wallet_balance: float
+    wallet_applied: bool
+    item_count: int
+
+
+class OrderQuoteResponse(BaseModel):
+    """Response wrapper for POST /orders/quote."""
+    success: bool = True
+    data: OrderQuoteBreakdown

@@ -1,6 +1,8 @@
 """
 Cart API Endpoints (Redis-based)
 """
+from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,8 +17,10 @@ from app.schemas.cart import (
     UpdateCartItemRequest,
 )
 from app.services.cart_service import CartService
+from app.services.coupon_service import CouponService, CouponValidationError
 
-router = APIRouter(prefix="/cart", tags=["Cart"])
+# Prefix "/cart" is applied by app/api/v1/router.py — do not repeat it here.
+router = APIRouter(tags=["Cart"])
 
 
 # ============================================================================
@@ -172,38 +176,50 @@ async def apply_coupon(
     current_user = Depends(get_current_user)
 ):
     """
-    Apply a coupon to cart.
+    Apply a coupon to the cart.
 
-    Note: In production, validate coupon from database.
+    The coupon is validated authoritatively against the ``coupons`` table:
+    the client only supplies the *code* — the discount type/value come from the
+    database, never from the request. All validation failures return a 400 with
+    a user-friendly message.
     """
     try:
-        # TODO: Validate coupon from database
-        # For now, use a simple demo coupon
-        if data.code.upper() == "SAVE10":
-            cart = await CartService.apply_coupon(
-                user_id=str(current_user.user_id),
-                code=data.code.upper(),
-                discount_type="percentage",
-                discount_value=10.0
-            )
-        elif data.code.upper() == "FLAT5":
-            cart = await CartService.apply_coupon(
-                user_id=str(current_user.user_id),
-                code=data.code.upper(),
-                discount_type="fixed",
-                discount_value=5.0
-            )
-        else:
+        cart = await CartService.get_cart(str(current_user.user_id))
+        if not cart.get("items"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid coupon code"
+                detail="Your cart is empty.",
             )
+
+        subtotal = Decimal(
+            str(sum(item["price"] * item["quantity"] for item in cart["items"]))
+        )
+
+        coupon = await CouponService.get_by_code(db, data.code)
+        if coupon is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid coupon code.",
+            )
+
+        # Enforce is_active, validity window, usage limit and min order value.
+        CouponService.validate(coupon, subtotal, datetime.now(timezone.utc))
+
+        # Apply using the DATABASE discount values (client input ignored).
+        updated_cart = await CartService.apply_coupon(
+            user_id=str(current_user.user_id),
+            code=coupon.code,
+            discount_type=coupon.discount_type,
+            discount_value=float(coupon.discount_value),
+        )
 
         return {
             "success": True,
-            "data": cart,
-            "message": "Coupon applied successfully"
+            "data": updated_cart,
+            "message": "Coupon applied successfully",
         }
+    except CouponValidationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:

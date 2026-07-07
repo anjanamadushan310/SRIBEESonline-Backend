@@ -4,16 +4,32 @@ SRIBEESonline - AppSettings Service
 CRUD operations for the ``app_settings`` table.
 Provides specialised helpers for the splash-video use-case.
 """
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.settings import settings
 from app.models.app_settings import AppSetting
 
 # Well-known setting keys
 SPLASH_VIDEO_KEY = "splash_video_url"
+FLAT_DELIVERY_FEE_KEY = "flat_delivery_fee"
+# Stored as a human-friendly percentage (e.g. "15" = 15%). Converted to a
+# fraction for PricingService in get_pricing_config().
+ORDER_TAX_RATE_PERCENT_KEY = "order_tax_rate_percent"
+
+
+def _to_float(value: Optional[str], fallback: float) -> float:
+    """Parse a stored string setting to float, falling back on any error."""
+    if value is None or value == "":
+        return fallback
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 class AppSettingsService:
@@ -83,3 +99,74 @@ class AppSettingsService:
             description="URL of the splash-screen animation video shown when the Flutter app opens",
             is_active=is_active,
         )
+
+    # ------------------------------------------------------------------
+    # Platform settings (checkout pricing + mobile app config)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def get_platform_settings(db: AsyncSession) -> dict:
+        """
+        Return the human-facing platform settings, falling back to the static
+        config defaults (``app.config.settings``) when a key is unset in the DB.
+
+        ``order_tax_rate_percent`` is a percentage (15.0 = 15%); the config
+        default ``order_tax_rate`` is a fraction, so it is scaled ×100 here.
+        """
+        fee_row = await AppSettingsService.get_by_key(db, FLAT_DELIVERY_FEE_KEY)
+        tax_row = await AppSettingsService.get_by_key(db, ORDER_TAX_RATE_PERCENT_KEY)
+        splash_row = await AppSettingsService.get_by_key(db, SPLASH_VIDEO_KEY)
+
+        return {
+            "flat_delivery_fee": _to_float(
+                fee_row.value if fee_row else None, float(settings.flat_delivery_fee)
+            ),
+            "order_tax_rate_percent": _to_float(
+                tax_row.value if tax_row else None, float(settings.order_tax_rate) * 100
+            ),
+            "splash_video_url": splash_row.value if splash_row else None,
+        }
+
+    @staticmethod
+    async def get_pricing_config(db: AsyncSession) -> dict:
+        """
+        Pricing values for :class:`PricingService`, derived from platform
+        settings. ``tax_rate`` is returned as a fraction (0.15 = 15%).
+        """
+        ps = await AppSettingsService.get_platform_settings(db)
+        try:
+            tax_fraction = Decimal(str(ps["order_tax_rate_percent"])) / Decimal("100")
+        except (InvalidOperation, TypeError):
+            tax_fraction = Decimal(str(settings.order_tax_rate))
+        return {
+            "delivery_fee": Decimal(str(ps["flat_delivery_fee"])),
+            "tax_rate": tax_fraction,
+        }
+
+    @staticmethod
+    async def update_platform_settings(
+        db: AsyncSession,
+        *,
+        flat_delivery_fee: Optional[float] = None,
+        order_tax_rate_percent: Optional[float] = None,
+        splash_video_url: Optional[str] = None,
+    ) -> dict:
+        """Upsert any provided platform settings; returns the fresh values."""
+        if flat_delivery_fee is not None:
+            await AppSettingsService.upsert(
+                db,
+                key=FLAT_DELIVERY_FEE_KEY,
+                value=str(flat_delivery_fee),
+                description="Flat delivery fee applied to non-empty carts (currency units)",
+            )
+        if order_tax_rate_percent is not None:
+            await AppSettingsService.upsert(
+                db,
+                key=ORDER_TAX_RATE_PERCENT_KEY,
+                value=str(order_tax_rate_percent),
+                description="Tax rate applied to the discounted subtotal, as a percentage",
+            )
+        if splash_video_url is not None:
+            await AppSettingsService.set_splash_video_url(db, splash_video_url)
+
+        return await AppSettingsService.get_platform_settings(db)

@@ -31,6 +31,32 @@ class SplashVideoUploadResponse(BaseModel):
 
 
 # ============================================================================
+# Admin — Platform Settings (checkout pricing + mobile app config)
+# ============================================================================
+
+class PlatformSettings(BaseModel):
+    """Human-facing platform configuration values."""
+    flat_delivery_fee: float = Field(..., ge=0, description="Flat delivery fee (currency units)")
+    order_tax_rate_percent: float = Field(
+        ..., ge=0, le=100, description="Order tax rate as a percentage (15 = 15%)"
+    )
+    splash_video_url: Optional[str] = Field(None, description="Splash-screen video URL")
+
+
+class PlatformSettingsResponse(BaseModel):
+    """GET /admin/settings response."""
+    success: bool = True
+    data: PlatformSettings
+
+
+class PlatformSettingsUpdate(BaseModel):
+    """PATCH /admin/settings — all fields optional (partial update)."""
+    flat_delivery_fee: Optional[float] = Field(None, ge=0)
+    order_tax_rate_percent: Optional[float] = Field(None, ge=0, le=100)
+    splash_video_url: Optional[str] = Field(None, max_length=500)
+
+
+# ============================================================================
 # Public — Splash Config (Flutter client)
 # ============================================================================
 

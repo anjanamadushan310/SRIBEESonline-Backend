@@ -61,6 +61,11 @@ class User(Base):
         default=False,
         nullable=False,
     )
+    is_phone_verified: bool = Column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
 
     # Two-factor authentication
     two_factor_enabled: bool = Column(
@@ -118,6 +123,12 @@ class User(Base):
     wishlist_items = relationship("WishlistItem", back_populates="user", cascade="all, delete-orphan")
     notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
     push_tokens = relationship("PushToken", back_populates="user", cascade="all, delete-orphan")
+    wallet = relationship(
+        "Wallet",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return f"<User(user_id={self.user_id}, email={self.email})>"
@@ -309,6 +320,20 @@ class Address(Base):
         nullable=False,
         index=True,
     )
+    # Contact/label metadata for the saved address (nullable — the delivery
+    # branch is resolved from post_office, not from these).
+    title: Optional[str] = Column(
+        String(100),
+        nullable=True,
+    )
+    recipient_name: Optional[str] = Column(
+        String(150),
+        nullable=True,
+    )
+    phone: Optional[str] = Column(
+        String(30),
+        nullable=True,
+    )
     address_line1: str = Column(
         String(255),
         nullable=False,
@@ -318,6 +343,10 @@ class Address(Base):
         nullable=True,
     )
     post_office: str = Column(
+        String(100),
+        nullable=False,
+    )
+    district: str = Column(
         String(100),
         nullable=False,
     )

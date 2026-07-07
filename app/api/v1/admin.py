@@ -16,7 +16,8 @@ from app.models.order import Order, OrderStatus, PaymentStatus
 from app.models.product import Product
 from app.models.user import User
 
-router = APIRouter(prefix="/admin", tags=["Admin"])
+# Prefix "/admin" is applied by app/api/v1/router.py — do not repeat it here.
+router = APIRouter(tags=["Admin"])
 
 
 # ============================================================================
@@ -245,8 +246,8 @@ async def get_order_analytics(
 # User Management
 # ============================================================================
 
-@router.get("/users", response_model=dict)
-async def get_users(
+@router.get("/customers", response_model=dict)
+async def get_customers(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     search: Optional[str] = None,
@@ -255,7 +256,10 @@ async def get_users(
     current_user = Depends(get_current_admin)
 ):
     """
-    Get all users with filtering and pagination.
+    Get all customer users with filtering and pagination.
+
+    Note: this operates on the ``users`` (customer) table. Admin-account
+    management lives at ``/admin/users`` (see admin_users.py).
     """
     try:
         query = select(User)
@@ -264,8 +268,8 @@ async def get_users(
             search_pattern = f"%{search}%"
             query = query.where(
                 User.email.ilike(search_pattern) |
-                User.first_name.ilike(search_pattern) |
-                User.last_name.ilike(search_pattern)
+                User.full_name.ilike(search_pattern) |
+                User.phone.ilike(search_pattern)
             )
 
         if role:
@@ -289,8 +293,7 @@ async def get_users(
                     {
                         "user_id": str(u.user_id),
                         "email": u.email,
-                        "first_name": u.first_name,
-                        "last_name": u.last_name,
+                        "full_name": u.full_name,
                         "phone": u.phone,
                         "role": u.role,
                         "is_active": u.is_active,
@@ -316,15 +319,15 @@ async def get_users(
         )
 
 
-@router.put("/users/{user_id}/role", response_model=dict)
-async def update_user_role(
+@router.put("/customers/{user_id}/role", response_model=dict)
+async def update_customer_role(
     user_id: str,
     role: str = Query(..., pattern="^(customer|admin|manager)$"),
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_admin)
 ):
     """
-    Update user role.
+    Update a customer user's role.
     """
     try:
         from uuid import UUID
@@ -363,15 +366,15 @@ async def update_user_role(
         )
 
 
-@router.put("/users/{user_id}/status", response_model=dict)
-async def toggle_user_status(
+@router.put("/customers/{user_id}/status", response_model=dict)
+async def toggle_customer_status(
     user_id: str,
     is_active: bool,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_admin)
 ):
     """
-    Enable or disable user account.
+    Enable or disable a customer user account.
     """
     try:
         from uuid import UUID

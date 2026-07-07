@@ -48,9 +48,17 @@ class ProductService:
         max_price: Optional[Decimal] = None,
         in_stock: Optional[bool] = None,
         sort_by: str = "created_at",
-        sort_order: str = "desc"
+        sort_order: str = "desc",
+        include_inactive: bool = False,
+        is_active: Optional[bool] = None,
     ) -> Tuple[List[Product], int]:
-        """Get all products with filtering and pagination."""
+        """Get all products with filtering and pagination.
+
+        The default (``include_inactive=False``, ``is_active=None``) preserves
+        the original behaviour of returning only active products. Admin
+        catalog views pass ``include_inactive=True`` to see the full Global
+        Catalog, optionally narrowing to a single status via ``is_active``.
+        """
 
         # Base query
         query = (
@@ -59,8 +67,14 @@ class ProductService:
                 selectinload(Product.category),
                 selectinload(Product.images)
             )
-            .where(Product.is_active == True)
         )
+
+        # Status filtering: explicit is_active wins; otherwise keep the
+        # active-only default unless the caller opts into inactive rows.
+        if is_active is not None:
+            query = query.where(Product.is_active == is_active)
+        elif not include_inactive:
+            query = query.where(Product.is_active == True)
 
         # Apply filters
         if category_id:
@@ -327,6 +341,38 @@ class ProductService:
         if image:
             await db.delete(image)
             await db.commit()
+
+    @staticmethod
+    async def set_primary_image(
+        db: AsyncSession,
+        product_id: UUID,
+        image_id: UUID,
+    ) -> ProductImage:
+        """
+        Mark one image as the primary thumbnail, unsetting all others for the
+        same product. Raises ValueError if the image doesn't belong to the
+        product.
+        """
+        result = await db.execute(
+            select(ProductImage).where(
+                ProductImage.image_id == image_id,
+                ProductImage.product_id == product_id,
+            )
+        )
+        image = result.scalar_one_or_none()
+        if image is None:
+            raise ValueError("Image not found for this product")
+
+        # Clear primary on every image for this product, then set the target.
+        await db.execute(
+            ProductImage.__table__.update()
+            .where(ProductImage.product_id == product_id)
+            .values(is_primary=False)
+        )
+        image.is_primary = True
+        await db.commit()
+        await db.refresh(image)
+        return image
 
     @staticmethod
     async def has_variants(db: AsyncSession, product_id: UUID) -> bool:
@@ -863,6 +909,88 @@ class ProductService:
         logger.info(
             f"Branch inventory updated: product={product_id} branch={branch_id} "
             f"fields={list(fields.keys())}"
+        )
+        return inv
+
+    # ================================================================
+    # Branch Inventory — admin stock ledger (list / update by inventory_id)
+    # ================================================================
+
+    @staticmethod
+    async def list_inventory(
+        db: AsyncSession,
+        branch_id: Optional[UUID] = None,
+        limit: int = 20,
+        offset: int = 0,
+        search: Optional[str] = None,
+        low_stock_only: bool = False,
+    ) -> Tuple[List[Tuple[BranchInventory, Product, "Branch"]], int]:
+        """
+        List branch_inventory rows joined with their product and branch.
+
+        ``branch_id`` scopes to a single branch (branch managers); pass None for
+        the all-branches view (super admins). Ordered by product name.
+        """
+        from app.models.branch import Branch
+
+        query = (
+            select(BranchInventory, Product, Branch)
+            .join(Product, BranchInventory.product_id == Product.product_id)
+            .join(Branch, BranchInventory.branch_id == Branch.branch_id)
+        )
+
+        if branch_id is not None:
+            query = query.where(BranchInventory.branch_id == branch_id)
+
+        if search:
+            pattern = f"%{search}%"
+            query = query.where(
+                or_(Product.name.ilike(pattern), Product.sku.ilike(pattern))
+            )
+
+        if low_stock_only:
+            query = query.where(
+                BranchInventory.stock_quantity <= BranchInventory.low_stock_threshold
+            )
+
+        count_q = select(func.count()).select_from(query.subquery())
+        total = (await db.execute(count_q)).scalar() or 0
+
+        query = query.order_by(Product.name).limit(limit).offset(offset)
+        rows = (await db.execute(query)).all()
+        return [tuple(r) for r in rows], total
+
+    @staticmethod
+    async def get_inventory_by_id(
+        db: AsyncSession,
+        inventory_id: UUID,
+    ) -> Optional[Tuple[BranchInventory, Product, "Branch"]]:
+        """Fetch a single inventory row with its product and branch."""
+        from app.models.branch import Branch
+
+        result = await db.execute(
+            select(BranchInventory, Product, Branch)
+            .join(Product, BranchInventory.product_id == Product.product_id)
+            .join(Branch, BranchInventory.branch_id == Branch.branch_id)
+            .where(BranchInventory.inventory_id == inventory_id)
+        )
+        row = result.first()
+        return tuple(row) if row else None
+
+    @staticmethod
+    async def update_inventory_row(
+        db: AsyncSession,
+        inv: BranchInventory,
+        **fields,
+    ) -> BranchInventory:
+        """Apply provided stock fields to an existing inventory row."""
+        for key, value in fields.items():
+            if value is not None and hasattr(inv, key):
+                setattr(inv, key, value)
+        await db.commit()
+        await db.refresh(inv)
+        logger.info(
+            f"Inventory row {inv.inventory_id} updated: fields={list(fields.keys())}"
         )
         return inv
 

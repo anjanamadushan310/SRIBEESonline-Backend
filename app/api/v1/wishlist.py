@@ -14,7 +14,8 @@ from app.core.dependencies import get_current_user
 from app.schemas.cart import WishlistItemAdd
 from app.services.wishlist_service import WishlistService
 
-router = APIRouter(prefix="/wishlist", tags=["Wishlist"])
+# Prefix "/wishlist" is applied by app/api/v1/router.py — do not repeat it here.
+router = APIRouter(tags=["Wishlist"])
 
 
 # ============================================================================

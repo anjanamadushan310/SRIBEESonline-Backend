@@ -216,6 +216,76 @@ class NotificationService:
         return push_token
 
     @staticmethod
+    async def upsert_push_token(
+        db: AsyncSession,
+        user_id: UUID,
+        token: str,
+        platform: Optional[str] = None,
+        device_id: Optional[str] = None,
+    ) -> PushToken:
+        """
+        Register or refresh an FCM device token, keyed by (user_id, device_id).
+
+        Handles FCM token rotation cleanly:
+          - If the device already has a row, its token is updated in place.
+          - If the incoming token is already held by a *different* row (unique
+            on ``token``), that stale row is removed first to avoid a conflict.
+          - Otherwise a known token is reassigned to this user/device, or a new
+            row is inserted.
+
+        Always ends with ``is_active = True``.
+        """
+        # Prefer the device's existing row so a rotated token updates in place.
+        device_row = None
+        if device_id:
+            result = await db.execute(
+                select(PushToken).where(and_(
+                    PushToken.user_id == user_id,
+                    PushToken.device_id == device_id,
+                ))
+            )
+            device_row = result.scalar_one_or_none()
+
+        # Any row already holding this exact token (``token`` is globally unique).
+        result = await db.execute(select(PushToken).where(PushToken.token == token))
+        token_row = result.scalar_one_or_none()
+
+        if device_row is not None:
+            # Device known → refresh its token. Drop any other row that already
+            # holds the new token to respect the unique(token) constraint.
+            if token_row is not None and token_row.token_id != device_row.token_id:
+                await db.delete(token_row)
+                await db.flush()
+            device_row.token = token
+            if platform:
+                device_row.device_type = platform
+            device_row.is_active = True
+            row = device_row
+        elif token_row is not None:
+            # Token known but no device row → reassign to this user/device.
+            token_row.user_id = user_id
+            if platform:
+                token_row.device_type = platform
+            if device_id:
+                token_row.device_id = device_id
+            token_row.is_active = True
+            row = token_row
+        else:
+            row = PushToken(
+                user_id=user_id,
+                token=token,
+                device_type=platform,
+                device_id=device_id,
+                is_active=True,
+            )
+            db.add(row)
+
+        await db.commit()
+        await db.refresh(row)
+        logger.info(f"Push token upserted for user {user_id} (device {device_id})")
+        return row
+
+    @staticmethod
     async def unregister_push_token(
         db: AsyncSession,
         user_id: UUID,

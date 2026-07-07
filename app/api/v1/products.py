@@ -27,24 +27,35 @@ from app.schemas.product import (
     ProductVariantCreate,
 )
 from app.services import branch_service
+from app.services.product_review_service import ProductReviewService
 from app.services.product_service import ProductService
 
-router = APIRouter(prefix="/products", tags=["Products"])
+# Prefix "/products" is applied by app/api/v1/router.py — do not repeat it here.
+router = APIRouter(tags=["Products"])
 
 
 # ============================================================================
 # Helper Functions
 # ============================================================================
 
-def format_product(product, include_variants: bool = False, branch_overrides: dict = None) -> dict:
+def format_product(
+    product,
+    include_variants: bool = False,
+    branch_overrides: dict = None,
+    rating: dict = None,
+) -> dict:
     """
     Format product for API response.
 
     If *branch_overrides* (from ``ProductService.compute_effective_data``)
     is provided, those effective values are merged into the response
     instead of the raw global fields.
+
+    *rating* (optional) carries the aggregated review stats
+    ``{"average": float, "count": int}``; when omitted both default to 0.
     """
     eff = branch_overrides or {}
+    rating = rating or {}
     data = {
         "_id": str(product.product_id),
         "product_id": str(product.product_id),
@@ -63,6 +74,8 @@ def format_product(product, include_variants: bool = False, branch_overrides: di
         "is_active": eff.get("is_active", product.is_active),
         "is_featured": product.is_featured,
         "view_count": product.view_count,
+        "average_rating": rating.get("average", 0),
+        "review_count": rating.get("count", 0),
         "created_at": product.created_at.isoformat() if product.created_at else None,
         "updated_at": product.updated_at.isoformat() if product.updated_at else None,
     }
@@ -446,12 +459,16 @@ async def get_product(
     except Exception:
         pass
 
+    # Aggregate review stats for this product.
+    average, count, _ = await ProductReviewService.get_rating_summary(db, product_uuid)
+
     return {
         "success": True,
         "data": format_product(
             result["product"],
             include_variants=True,
             branch_overrides=result["effective"],
+            rating={"average": average, "count": count},
         ),
     }
 

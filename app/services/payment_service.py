@@ -126,31 +126,36 @@ class PaymentService:
     @staticmethod
     async def handle_webhook(payload: bytes, signature: str) -> dict:
         """
-        Handle Stripe webhook events.
-
-        In production, use:
-        ```python
-        event = stripe.Webhook.construct_event(
-            payload, signature, settings.stripe_webhook_secret
-        )
-        ```
+        Handle Stripe webhook events with signature verification.
+        Raises ValueError if the signature is missing, invalid, or the
+        webhook secret is not configured — preventing fake event injection.
         """
-        # Stub implementation
-        import json
+        import stripe as stripe_lib
+
+        webhook_secret = settings.stripe_webhook_secret
+        if not webhook_secret or webhook_secret.startswith("whsec_your"):
+            logger.error("Stripe webhook secret not configured — rejecting event")
+            raise ValueError("Webhook secret not configured")
 
         try:
-            event_data = json.loads(payload)
-            event_type = event_data.get("type", "unknown")
-
-            logger.info(f"Received webhook: {event_type}")
-
-            return {
-                "received": True,
-                "event_type": event_type
-            }
+            event = stripe_lib.Webhook.construct_event(
+                payload, signature, webhook_secret
+            )
+        except stripe_lib.error.SignatureVerificationError as e:
+            logger.warning(f"Invalid Stripe webhook signature: {e}")
+            raise ValueError("Invalid webhook signature")
         except Exception as e:
-            logger.error(f"Webhook error: {e}")
+            logger.error(f"Webhook parse error: {e}")
             raise ValueError("Invalid webhook payload")
+
+        event_type = event["type"]
+        logger.info(f"Verified Stripe webhook: {event_type}")
+
+        return {
+            "received": True,
+            "event_type": event_type,
+            "event_id": event["id"],
+        }
 
     @staticmethod
     async def create_customer(

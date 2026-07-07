@@ -26,6 +26,29 @@ class ReviewCreate(BaseModel):
         return v
 
 
+class SubmitReviewRequest(BaseModel):
+    """Body for POST /products/{id}/reviews — product_id comes from the path."""
+    rating: int = Field(..., ge=1, le=5, description="Star rating, 1-5")
+    title: Optional[str] = Field(None, max_length=255)
+    comment: Optional[str] = Field(None, max_length=2000)
+
+    @field_validator("title", "comment", mode="before")
+    @classmethod
+    def _strip(cls, v):
+        if isinstance(v, str):
+            return v.strip() or None
+        return v
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "rating": 5,
+                "title": "Great quality",
+                "comment": "Fresh and delivered fast.",
+            }
+        }
+
+
 class ReviewUpdate(BaseModel):
     """Schema for updating a review."""
     rating: Optional[int] = Field(None, ge=1, le=5)

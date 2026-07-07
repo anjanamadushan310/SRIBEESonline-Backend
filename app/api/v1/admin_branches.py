@@ -1,0 +1,192 @@
+"""
+Admin Branch Management API
+
+Full CRUD over store branches. Restricted to Super Admins (enforced at the
+router level). Delete is guarded: a branch that still has admins, inventory or
+post-office mappings attached cannot be removed — deactivate it instead.
+
+Note on fields: the branch model uses Sri-Lankan location columns
+(``district`` + ``province``); the admin UI's "City" maps to ``district``.
+
+Prefix "/admin/branches" is applied by app/api/v1/router.py.
+"""
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from loguru import logger
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config.database import get_db
+from app.core.dependencies import require_roles
+from app.models.admin import Admin
+from app.models.branch import Branch, PostOfficeBranchMapping
+from app.models.product import BranchInventory
+from app.schemas.branch import BranchCreate, BranchUpdate
+
+router = APIRouter(
+    dependencies=[Depends(require_roles("super_admin"))],
+    tags=["Admin Branches"],
+)
+
+
+def _format_branch(b: Branch) -> dict:
+    return {
+        "branch_id": str(b.branch_id),
+        "name": b.name,
+        "code": b.code,
+        "address": b.address,
+        "district": b.district,
+        "province": b.province,
+        "post_office": b.post_office,
+        "phone": b.phone,
+        "manager_id": str(b.manager_id) if b.manager_id else None,
+        "is_active": b.is_active,
+        "created_at": b.created_at.isoformat() if b.created_at else None,
+        "updated_at": b.updated_at.isoformat() if b.updated_at else None,
+    }
+
+
+async def _get_branch_or_404(db: AsyncSession, branch_id: UUID) -> Branch:
+    result = await db.execute(select(Branch).where(Branch.branch_id == branch_id))
+    branch = result.scalar_one_or_none()
+    if branch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Branch not found",
+        )
+    return branch
+
+
+async def _code_taken(db: AsyncSession, code: str, exclude_id: UUID | None = None) -> bool:
+    stmt = select(Branch.branch_id).where(func.lower(Branch.code) == code.lower())
+    if exclude_id is not None:
+        stmt = stmt.where(Branch.branch_id != exclude_id)
+    return (await db.execute(stmt)).scalar_one_or_none() is not None
+
+
+@router.get("", response_model=dict)
+async def list_branches(
+    include_inactive: bool = Query(True, description="Include inactive branches"),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all branches (active and inactive by default)."""
+    stmt = select(Branch).order_by(Branch.name)
+    if not include_inactive:
+        stmt = stmt.where(Branch.is_active.is_(True))
+    branches = (await db.execute(stmt)).scalars().all()
+    return {
+        "success": True,
+        "data": {"branches": [_format_branch(b) for b in branches]},
+    }
+
+
+@router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
+async def create_branch(
+    data: BranchCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new branch."""
+    if await _code_taken(db, data.code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A branch with this code already exists",
+        )
+
+    branch = Branch(
+        name=data.name.strip(),
+        code=data.code.strip(),
+        address=data.address,
+        post_office=data.post_office,
+        district=data.district,
+        province=data.province,
+        phone=data.phone,
+        manager_id=data.manager_id,
+    )
+    db.add(branch)
+    await db.commit()
+    await db.refresh(branch)
+    logger.info(f"[admin] Branch created: {branch.branch_id} - {branch.name}")
+    return {
+        "success": True,
+        "data": _format_branch(branch),
+        "message": "Branch created successfully",
+    }
+
+
+@router.put("/{branch_id}", response_model=dict)
+async def update_branch(
+    branch_id: UUID,
+    data: BranchUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a branch (name, code, address, district, province, phone, status)."""
+    branch = await _get_branch_or_404(db, branch_id)
+    fields = data.model_dump(exclude_unset=True)
+
+    new_code = fields.get("code")
+    if new_code and await _code_taken(db, new_code, exclude_id=branch_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A branch with this code already exists",
+        )
+
+    for key, value in fields.items():
+        if hasattr(branch, key):
+            setattr(branch, key, value)
+
+    await db.commit()
+    await db.refresh(branch)
+    logger.info(f"[admin] Branch updated: {branch.branch_id}")
+    return {
+        "success": True,
+        "data": _format_branch(branch),
+        "message": "Branch updated successfully",
+    }
+
+
+@router.delete("/{branch_id}", response_model=dict)
+async def delete_branch(
+    branch_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete a branch. Blocked while it still has admins, inventory rows or
+    post-office mappings attached (deactivate it via PUT instead).
+    """
+    branch = await _get_branch_or_404(db, branch_id)
+
+    admin_count = (
+        await db.execute(
+            select(func.count(Admin.admin_id)).where(Admin.branch_id == branch_id)
+        )
+    ).scalar() or 0
+    inv_count = (
+        await db.execute(
+            select(func.count(BranchInventory.inventory_id)).where(
+                BranchInventory.branch_id == branch_id
+            )
+        )
+    ).scalar() or 0
+    mapping_count = (
+        await db.execute(
+            select(func.count(PostOfficeBranchMapping.mapping_id)).where(
+                PostOfficeBranchMapping.branch_id == branch_id
+            )
+        )
+    ).scalar() or 0
+
+    if admin_count or inv_count or mapping_count:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Cannot delete: branch still has {admin_count} admin(s), "
+                f"{inv_count} inventory row(s) and {mapping_count} post-office "
+                f"mapping(s). Deactivate the branch instead."
+            ),
+        )
+
+    await db.delete(branch)
+    await db.commit()
+    logger.info(f"[admin] Branch deleted: {branch_id}")
+    return {"success": True, "message": "Branch deleted successfully"}

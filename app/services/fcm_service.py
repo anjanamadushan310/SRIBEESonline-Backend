@@ -4,6 +4,7 @@ SRIBEESonline - Firebase Cloud Messaging Service
 Push notification service using Firebase Admin SDK.
 Replaces Expo Push Notifications for Flutter mobile app.
 """
+import asyncio
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -125,8 +126,9 @@ class FCMService:
                 token=token,
             )
 
-            # Send message
-            response = messaging.send(message)
+            # firebase-admin's send() is synchronous/blocking — run it off the
+            # event loop so a slow FCM call never stalls the API request.
+            response = await asyncio.to_thread(messaging.send, message)
             logger.info(f"FCM message sent: {response}")
             return True
 
@@ -181,8 +183,10 @@ class FCMService:
                 tokens=tokens,
             )
 
-            # Send multicast
-            response = messaging.send_each_for_multicast(message)
+            # Send multicast off the event loop (firebase-admin is blocking).
+            response = await asyncio.to_thread(
+                messaging.send_each_for_multicast, message
+            )
 
             # Collect failed tokens
             failed_tokens = []

@@ -12,11 +12,13 @@ from app.core.dependencies import get_current_admin, get_current_user
 from app.schemas.notification import (
     BroadcastNotificationRequest,
     CreateNotificationRequest,
+    PushTokenRegisterRequest,
     RegisterPushTokenRequest,
 )
 from app.services.notification_service import NotificationService
 
-router = APIRouter(prefix="/notifications", tags=["Notifications"])
+# Prefix "/notifications" is applied by app/api/v1/router.py — do not repeat it here.
+router = APIRouter(tags=["Notifications"])
 
 
 # ============================================================================
@@ -109,6 +111,7 @@ async def get_unread_count(
         )
 
 
+@router.patch("/{notification_id}/read", response_model=dict)
 @router.put("/{notification_id}/read", response_model=dict)
 async def mark_notification_read(
     notification_id: str,
@@ -117,6 +120,8 @@ async def mark_notification_read(
 ):
     """
     Mark a notification as read.
+
+    Exposed as both PATCH (per the mobile API contract) and PUT (legacy).
     """
     try:
         notification = await NotificationService.mark_as_read(
@@ -247,6 +252,45 @@ async def delete_all_notifications(
 # ============================================================================
 # Push Token Endpoints
 # ============================================================================
+
+@router.post("/push/token", response_model=dict)
+async def register_fcm_push_token(
+    data: PushTokenRegisterRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """
+    Register or refresh the caller's FCM device token.
+
+    Upserts into ``push_tokens`` keyed by (user, device_id): a device that
+    rotated its token updates its existing row, otherwise a new row is inserted.
+    The row is always marked ``is_active = True``.
+    """
+    try:
+        row = await NotificationService.upsert_push_token(
+            db,
+            user_id=current_user.user_id,
+            token=data.token,
+            platform=data.platform,
+            device_id=data.device_id,
+        )
+        return {
+            "success": True,
+            "data": {
+                "token_id": str(row.token_id),
+                "platform": row.device_type,
+                "device_id": row.device_id,
+                "is_active": row.is_active,
+            },
+            "message": "Push token registered",
+        }
+    except Exception as e:
+        logger.error(f"Error registering FCM push token: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to register push token",
+        )
+
 
 @router.post("/push-token", response_model=dict)
 async def register_push_token(

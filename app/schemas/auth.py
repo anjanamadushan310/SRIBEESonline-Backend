@@ -166,6 +166,41 @@ class RefreshTokenRequest(BaseModel):
         }
 
 
+class UpdateProfileRequest(BaseModel):
+    """Profile update request schema (PATCH /auth/me).
+
+    The user's name is a single `full_name` field, matching the
+    `users.full_name` database column. Only provided fields are updated.
+    """
+
+    full_name: Optional[str] = Field(
+        None,
+        min_length=2,
+        max_length=100,
+        description="User's full name",
+    )
+    phone: Optional[str] = Field(None, max_length=20, description="Phone number")
+    profile_picture_url: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Profile picture URL",
+    )
+
+    @field_validator("full_name")
+    @classmethod
+    def validate_full_name(cls, v: Optional[str]) -> Optional[str]:
+        """Strip whitespace from name."""
+        return v.strip() if v is not None else v
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "full_name": "John Doe",
+                "phone": "+94771234567",
+            }
+        }
+
+
 class ChangePasswordRequest(BaseModel):
     """Change password request schema."""
 
@@ -196,6 +231,39 @@ class ChangePasswordRequest(BaseModel):
 # Response Schemas
 # ============================================================================
 
+class RequestOTPResponse(BaseModel):
+    """Response after requesting a phone OTP."""
+    success: bool = True
+    message: str = "OTP sent"
+    expires_in_seconds: int = Field(..., alias="expiresInSeconds")
+
+    class Config:
+        populate_by_name = True
+
+
+class VerifyOTPRequest(BaseModel):
+    """Request to verify a phone OTP."""
+    code: str = Field(..., min_length=6, max_length=6)
+
+    @field_validator("code")
+    @classmethod
+    def digits_only(cls, v: str) -> str:
+        v = v.strip()
+        if not v.isdigit():
+            raise ValueError("OTP code must be 6 digits")
+        return v
+
+
+class VerifyOTPResponse(BaseModel):
+    """Response after verifying a phone OTP."""
+    success: bool = True
+    is_phone_verified: bool = Field(..., alias="isPhoneVerified")
+    message: str = "Phone verified"
+
+    class Config:
+        populate_by_name = True
+
+
 class UserResponse(BaseModel):
     """User data response schema."""
 
@@ -205,6 +273,7 @@ class UserResponse(BaseModel):
     phone: Optional[str] = None
     profile_picture_url: Optional[str] = Field(None, alias="profilePictureUrl")
     is_verified: bool = Field(..., alias="isVerified")
+    is_phone_verified: bool = Field(False, alias="isPhoneVerified")
     two_factor_enabled: bool = Field(False, alias="twoFactorEnabled")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")

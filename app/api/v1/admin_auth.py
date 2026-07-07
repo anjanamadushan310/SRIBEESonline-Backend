@@ -11,8 +11,8 @@ from app.schemas.admin_auth import (
     AdminListResponse,
     AdminLoginRequest,
     AdminProfileResponse,
+    AdminRefreshRequest,
     AdminResponse,
-    BranchListResponse,
     CreateAdminRequest,
 )
 from app.schemas.auth import MessageResponse
@@ -36,10 +36,37 @@ async def admin_login(
     """
     try:
         return await AdminAuthService.login(data.email, data.password, db)
-    except ValueError as e:
+    except ValueError:
+        # Use a generic message to avoid leaking whether the email exists.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),
+            detail="Invalid credentials.",
+        )
+
+
+@router.post(
+    "/refresh",
+    response_model=AdminAuthResponse,
+    summary="Refresh admin tokens",
+    description="Rotate admin access/refresh tokens using a valid refresh token.",
+)
+async def admin_refresh(
+    data: AdminRefreshRequest,
+    db: AsyncSession = Depends(get_db),
+) -> AdminAuthResponse:
+    """
+    Refresh admin JWT tokens.
+
+    Returns a new access/refresh pair and the admin profile. The old
+    refresh token is invalidated (rotation).
+    """
+    try:
+        return await AdminAuthService.refresh(data.refresh_token, db)
+    except ValueError:
+        # Generic message; details are logged server-side.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token.",
         )
 
 
@@ -107,25 +134,6 @@ async def list_admins(
     Only Super Admins can list admin users.
     """
     return await AdminAuthService.list_admins(db)
-
-
-@router.get(
-    "/branches",
-    response_model=BranchListResponse,
-    summary="List branches",
-    description="List all branches.",
-)
-async def list_branches(
-    current_admin = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-) -> BranchListResponse:
-    """
-    List all branches.
-
-    Returns empty list if no branches configured.
-    """
-    # TODO: Implement branch model if needed
-    return BranchListResponse(success=True, branches=[])
 
 
 @router.post(

@@ -25,6 +25,11 @@ class AdminLoginRequest(BaseModel):
     password: str
 
 
+class AdminRefreshRequest(BaseModel):
+    """Admin token refresh request."""
+    refresh_token: str = Field(..., description="JWT refresh token")
+
+
 class CreateAdminRequest(BaseModel):
     """Create admin user request."""
     email: EmailStr
@@ -32,6 +37,16 @@ class CreateAdminRequest(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=100)
     role: AdminRole
     branch_id: Optional[UUID] = None
+
+
+class UpdateAdminRequest(BaseModel):
+    """Update admin user request — all fields optional (partial update)."""
+    email: Optional[EmailStr] = None
+    password: Optional[str] = Field(None, min_length=8, description="New password (omit to keep current)")
+    full_name: Optional[str] = Field(None, min_length=2, max_length=100)
+    role: Optional[AdminRole] = None
+    branch_id: Optional[UUID] = None
+    is_active: Optional[bool] = None
 
 
 # Response Schemas
@@ -63,6 +78,7 @@ class AdminTokensResponse(BaseModel):
 class AdminAuthData(BaseModel):
     admin: AdminResponse
     token: str
+    refresh_token: str
 
 class AdminAuthResponse(BaseModel):
     """Admin authentication response."""

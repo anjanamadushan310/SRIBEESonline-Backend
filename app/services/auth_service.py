@@ -642,6 +642,59 @@ class AuthService:
         )
 
     @staticmethod
+    async def update_profile(current_user, data, db: AsyncSession):
+        """
+        Update user's profile (partial update).
+
+        Accepts a single `full_name` field for the user's name, matching the
+        `users.full_name` column. Only fields present in the request are
+        updated.
+
+        Args:
+            current_user: Currently authenticated user
+            data: UpdateProfileRequest with fields to update
+            db: Database session
+
+        Returns:
+            ProfileResponse with the updated user data
+        """
+        from app.schemas.auth import ProfileResponse, UserResponse
+
+        result = await db.execute(
+            select(User).where(User.user_id == current_user.user_id)
+        )
+        user = result.scalar_one_or_none()
+
+        if not user:
+            raise InvalidCredentialsError()
+
+        if data.full_name is not None:
+            user.full_name = data.full_name
+        if data.phone is not None:
+            user.phone = data.phone
+        if data.profile_picture_url is not None:
+            user.profile_picture_url = data.profile_picture_url
+
+        await db.commit()
+        await db.refresh(user)
+
+        return ProfileResponse(
+            success=True,
+            user=UserResponse(
+                user_id=user.user_id,
+                email=user.email,
+                full_name=user.full_name,
+                phone=user.phone,
+                profile_picture_url=user.profile_picture_url,
+                is_verified=user.is_verified,
+                two_factor_enabled=user.two_factor_enabled,
+                created_at=user.created_at,
+                updated_at=user.updated_at,
+                last_login=user.last_login,
+            ),
+        )
+
+    @staticmethod
     async def get_sessions(current_user, db: AsyncSession):
         """
         Get all active sessions for user.

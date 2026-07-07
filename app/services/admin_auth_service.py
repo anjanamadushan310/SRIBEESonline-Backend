@@ -1,14 +1,13 @@
 """
 Admin Auth Service
 """
-import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import create_token_pair, hash_password, verify_password
+from app.core.security import create_token_pair, hash_password, verify_password, verify_token
 from app.models.admin import Admin, AdminRole, AdminSession
 from app.schemas.admin_auth import (
     AdminAuthData,
@@ -45,15 +44,22 @@ class AdminAuthService:
         if not verify_password(password, admin.password_hash):
             raise ValueError("Invalid email or password")
 
-        # Create session
+        # Create session backed by the JWT refresh token
         session_id = uuid4()
-        refresh_token = secrets.token_urlsafe(64)
         expires_at = datetime.utcnow() + timedelta(days=7)
+
+        tokens = create_token_pair(
+            user_id=admin.admin_id,
+            email=admin.email,
+            session_id=session_id,
+            is_admin=True,
+            role=admin.role.value,
+        )
 
         session = AdminSession(
             session_id=session_id,
             admin_id=admin.admin_id,
-            refresh_token_hash=hash_password(refresh_token),
+            refresh_token_hash=hash_password(tokens["refresh_token"]),
             expires_at=expires_at,
         )
         db.add(session)
@@ -63,15 +69,6 @@ class AdminAuthService:
 
         await db.commit()
         await db.refresh(admin)
-
-        # Generate tokens
-        tokens = create_token_pair(
-            user_id=admin.admin_id,
-            email=admin.email,
-            session_id=session_id,
-            is_admin=True,
-            role=admin.role.value,
-        )
 
         logger.info(f"Admin logged in: {admin.email}")
 
@@ -90,6 +87,88 @@ class AdminAuthService:
                     created_at=admin.created_at,
                 ),
                 token=tokens["access_token"],
+                refresh_token=tokens["refresh_token"],
+            )
+        )
+
+    @staticmethod
+    async def refresh(refresh_token: str, db: AsyncSession) -> AdminAuthResponse:
+        """
+        Rotate admin tokens using a valid refresh token.
+
+        Verifies the JWT refresh token, matches it against the stored
+        session, then issues a new access/refresh pair and updates the
+        session so the old refresh token can no longer be used.
+        """
+        payload = verify_token(refresh_token, token_type="refresh")
+        if not payload or not payload.get("is_admin"):
+            raise ValueError("Invalid refresh token")
+
+        admin_id = payload.get("sub")
+        session_id = payload.get("session_id")
+        if not admin_id or not session_id:
+            raise ValueError("Invalid refresh token")
+
+        result = await db.execute(
+            select(AdminSession).where(
+                AdminSession.session_id == UUID(session_id),
+                AdminSession.admin_id == UUID(admin_id),
+            )
+        )
+        session = result.scalar_one_or_none()
+        if not session:
+            raise ValueError("Session not found")
+
+        # expires_at may come back tz-aware (timestamptz column)
+        expires_at = session.expires_at
+        if expires_at.tzinfo is not None:
+            expires_at = expires_at.astimezone(timezone.utc).replace(tzinfo=None)
+        if expires_at < datetime.utcnow():
+            await db.delete(session)
+            await db.commit()
+            raise ValueError("Session expired")
+
+        if not verify_password(refresh_token, session.refresh_token_hash):
+            raise ValueError("Invalid refresh token")
+
+        result = await db.execute(
+            select(Admin).where(Admin.admin_id == UUID(admin_id))
+        )
+        admin = result.scalar_one_or_none()
+        if not admin or not admin.is_active:
+            raise ValueError("Account is disabled")
+
+        # Rotate: new pair bound to the same session, old token invalidated
+        tokens = create_token_pair(
+            user_id=admin.admin_id,
+            email=admin.email,
+            session_id=session.session_id,
+            is_admin=True,
+            role=admin.role.value,
+        )
+        session.refresh_token_hash = hash_password(tokens["refresh_token"])
+        session.expires_at = datetime.utcnow() + timedelta(days=7)
+
+        await db.commit()
+
+        logger.info(f"Admin token refreshed: {admin.email}")
+
+        return AdminAuthResponse(
+            success=True,
+            message="Token refreshed successfully",
+            data=AdminAuthData(
+                admin=AdminResponse(
+                    admin_id=admin.admin_id,
+                    email=admin.email,
+                    full_name=admin.full_name,
+                    role=admin.role,
+                    branch_id=admin.branch_id,
+                    is_active=admin.is_active,
+                    last_login=admin.last_login,
+                    created_at=admin.created_at,
+                ),
+                token=tokens["access_token"],
+                refresh_token=tokens["refresh_token"],
             )
         )
 

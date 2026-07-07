@@ -3,7 +3,7 @@ Order Service - Business Logic
 """
 import random
 import string
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Optional, Tuple
 from uuid import UUID
@@ -14,9 +14,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.order import Order, OrderItem, OrderStatus, PaymentStatus
+from app.models.product import Product
 from app.models.user import Address
-from app.schemas.order import CreateOrderRequest, OrderStatusEnum, PaymentStatusEnum
+from app.models.wallet import WalletTransactionType
+from app.schemas.notification import NotificationTypeEnum
+from app.schemas.order import (
+    CreateOrderRequest,
+    OrderStatusEnum,
+    PaymentMethodEnum,
+    PaymentStatusEnum,
+)
+from app.services.app_settings_service import AppSettingsService
 from app.services.cart_service import CartService
+from app.services.coupon_service import CouponService
+from app.services.notification_service import NotificationService
+from app.services.pricing_service import PricingService
+from app.services.wallet_service import WalletService
 
 
 class OrderService:
@@ -56,30 +69,107 @@ class OrderService:
         if not address:
             raise ValueError("Invalid delivery address")
 
-        # Calculate totals
-        totals = cart["totals"]
+        # Authoritative coupon: re-validate against the database at checkout and
+        # use the DB discount values — never the discount stored in the Redis
+        # cart (defence in depth against a stale or tampered cart entry).
+        coupon_row = None
+        coupon_for_pricing = None
+        raw_coupon = cart.get("coupon")
+        if raw_coupon and raw_coupon.get("code"):
+            coupon_row = await CouponService.get_by_code(db, raw_coupon["code"])
+            if coupon_row is None:
+                raise ValueError("The applied coupon is no longer valid.")
+            cart_subtotal = Decimal(
+                str(sum(i["price"] * i["quantity"] for i in cart["items"]))
+            )
+            # Raises CouponValidationError (a ValueError) → 400 at the endpoint.
+            CouponService.validate(coupon_row, cart_subtotal, datetime.now(timezone.utc))
+            coupon_for_pricing = {
+                "code": coupon_row.code,
+                "discount_type": coupon_row.discount_type,
+                "discount_value": float(coupon_row.discount_value),
+            }
+
+        # Authoritative totals — same PricingService used by POST /orders/quote,
+        # so the charged amount always equals the previewed quote. Delivery fee
+        # and tax rate come from the DB-backed platform settings.
+        wallet_balance = Decimal("0")
+        if data.use_wallet:
+            wallet = await WalletService.get_or_create_wallet(db, user_id)
+            wallet_balance = wallet.balance or Decimal("0")
+
+        pricing_config = await AppSettingsService.get_pricing_config(db)
+
+        breakdown = PricingService.quote(
+            items=cart["items"],
+            coupon=coupon_for_pricing,
+            use_wallet=data.use_wallet,
+            wallet_balance=wallet_balance,
+            delivery_fee=pricing_config["delivery_fee"],
+            tax_rate=pricing_config["tax_rate"],
+        )
+
+        wallet_deduction = breakdown.wallet_deduction
+        cashback_earned = breakdown.cashback_earned
+        order_number = OrderService.generate_order_number()
+
+        # Attribute the order to the branch serving the delivery address's post
+        # office, so branch-scoped admins can see and manage it. Best-effort:
+        # an unmapped post office leaves branch_id NULL (does not block checkout).
+        branch_id = None
+        try:
+            from app.services import branch_service
+
+            mapping = await branch_service.resolve_branch_by_post_office(
+                db, address.post_office
+            )
+            if mapping is not None:
+                branch_id = mapping.branch_id
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"Could not resolve branch for order: {exc}")
+
+        # Payment status. COD is collected on delivery, so it is always PENDING.
+        # A WALLET order whose total is fully covered by the wallet balance is
+        # already PAID; anything with a balance still to collect stays PENDING.
+        if data.payment_method == PaymentMethodEnum.WALLET.value and breakdown.total <= 0:
+            payment_status_value = PaymentStatus.PAID.value
+        else:
+            payment_status_value = PaymentStatus.PENDING.value
 
         # Create order
         order = Order(
             user_id=user_id,
-            order_number=OrderService.generate_order_number(),
-            subtotal=Decimal(str(totals["subtotal"])),
-            tax_amount=Decimal(str(totals["tax"])),
-            shipping_amount=Decimal(str(totals["shipping"])),
-            discount_amount=Decimal(str(totals["discount"])),
-            total_amount=Decimal(str(totals["total"])),
+            order_number=order_number,
+            branch_id=branch_id,
+            subtotal=breakdown.subtotal,
+            tax_amount=breakdown.tax,
+            shipping_amount=breakdown.delivery_fee,
+            discount_amount=breakdown.discount,
+            wallet_deduction=wallet_deduction,
+            cashback_earned=cashback_earned,
+            total_amount=breakdown.total,
             delivery_address_id=UUID(data.delivery_address_id),
             delivery_slot_date=data.delivery_slot_date,
             delivery_slot_time=data.delivery_slot_time,
             payment_method=data.payment_method,
-            coupon_code=cart.get("coupon", {}).get("code") if cart.get("coupon") else data.coupon_code,
+            coupon_code=coupon_row.code if coupon_row else data.coupon_code,
             notes=data.notes,
             status=OrderStatus.PENDING.value,
-            payment_status=PaymentStatus.PENDING.value
+            payment_status=payment_status_value
         )
 
         db.add(order)
         await db.flush()  # Get order_id
+
+        # Redeem the coupon atomically within this transaction. The conditional
+        # UPDATE guards used_count < usage_limit under a row lock, so two orders
+        # racing for the final slot cannot both succeed. If it lost the race,
+        # roll the whole order back and surface a 400.
+        if coupon_row is not None:
+            redeemed = await CouponService.atomic_increment_usage(db, coupon_row.coupon_id)
+            if not redeemed:
+                await db.rollback()
+                raise ValueError("This coupon has reached its usage limit.")
 
         # Create order items
         for item in cart["items"]:
@@ -96,15 +186,119 @@ class OrderService:
             )
             db.add(order_item)
 
+        # Record wallet movements atomically with the order.
+        # Spend first so the earned cashback isn't immediately spendable on the
+        # same order.
+        if wallet_deduction > 0:
+            await WalletService.apply_transaction(
+                db,
+                user_id=user_id,
+                tx_type=WalletTransactionType.SPENT,
+                amount=wallet_deduction,
+                title="Wallet payment",
+                order_id=order.order_id,
+                order_number=order_number,
+            )
+        if cashback_earned > 0:
+            await WalletService.apply_transaction(
+                db,
+                user_id=user_id,
+                tx_type=WalletTransactionType.EARNED,
+                amount=cashback_earned,
+                title="Order cashback",
+                order_id=order.order_id,
+                order_number=order_number,
+            )
+
         await db.commit()
         await db.refresh(order)
 
         # Clear cart after successful order
         await CartService.clear_cart(str(user_id))
 
-        logger.info(f"Order created: {order.order_number} for user {user_id}")
+        logger.info(
+            f"Order created: {order.order_number} for user {user_id} "
+            f"(wallet -{wallet_deduction}, cashback +{cashback_earned})"
+        )
+
+        # Notify the user their order was placed. Best-effort: a notification
+        # failure must never roll back a successfully committed order.
+        try:
+            await NotificationService.create(
+                db,
+                user_id=user_id,
+                type=NotificationTypeEnum.ORDER_STATUS,
+                title="Order Confirmed",
+                message=(
+                    f"Your order #{order.order_number} has been placed "
+                    f"successfully."
+                ),
+                reference_type="order",
+                reference_id=order.order_id,
+                data={
+                    "order_number": order.order_number,
+                    "status": order.status,
+                },
+                send_push=True,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Order {order.order_number} placed but confirmation "
+                f"notification failed: {e}"
+            )
 
         return order
+
+    @staticmethod
+    async def reorder(
+        db: AsyncSession,
+        order_id: UUID,
+        user_id: UUID,
+    ) -> Tuple[dict, list]:
+        """
+        Re-add a past order's items to the user's cart at CURRENT prices.
+
+        Products that are missing, inactive or out of stock are skipped; the
+        requested quantity is capped at available stock. Returns the updated
+        cart and the list of skipped (unavailable) product names.
+
+        Raises ValueError if the order is invalid or nothing could be re-added.
+        """
+        order = await OrderService.get_by_id(db, order_id, user_id)
+        if not order:
+            raise ValueError("Order not found")
+        if not order.items:
+            raise ValueError("This order has no items to reorder")
+
+        added_any = False
+        unavailable: list = []
+
+        for item in order.items:
+            product = await db.get(Product, item.product_id)
+            available_stock = product.stock_quantity if product else 0
+
+            if not product or not product.is_active or available_stock <= 0:
+                unavailable.append(item.product_name)
+                continue
+
+            quantity = min(item.quantity, available_stock)
+            await CartService.add_item(
+                user_id=str(user_id),
+                product_id=str(item.product_id),
+                quantity=quantity,
+                price=float(product.price),
+                name=product.name or item.product_name,
+                image=item.product_image,
+                sku=product.sku or item.product_sku,
+                variant_id=str(item.variant_id) if item.variant_id else None,
+            )
+            added_any = True
+
+        if not added_any:
+            raise ValueError("None of the items are available to reorder")
+
+        cart = await CartService.get_cart(str(user_id))
+        return cart, unavailable
 
     @staticmethod
     async def get_by_id(
@@ -213,12 +407,99 @@ class OrderService:
         return orders, total
 
     @staticmethod
+    async def _release_order_coupon(db: AsyncSession, order: Order) -> None:
+        """
+        Release the coupon redemption held by this order (if any) back to the
+        public pool. Best-effort and idempotent at the call sites: callers must
+        only invoke this on the *transition* into a cancelled state so a slot is
+        never released twice for the same order. Does not commit.
+        """
+        if not order.coupon_code:
+            return
+        coupon = await CouponService.get_by_code(db, order.coupon_code)
+        if coupon is None:
+            return
+        released = await CouponService.atomic_decrement_usage(db, coupon.coupon_id)
+        if released:
+            logger.info(
+                f"Coupon {coupon.code} redemption released by cancelled "
+                f"order {order.order_number}"
+            )
+
+    @staticmethod
+    async def _reverse_order_financials(db: AsyncSession, order: Order) -> None:
+        """
+        Reverse every financial effect of an order on cancellation:
+
+          1. Release the coupon redemption slot.
+          2. Refund the wallet balance the customer spent (``wallet_deduction``)
+             via a REFUND credit.
+          3. Claw back the cashback credited for this order (``cashback_earned``)
+             via a SPENT debit.
+
+        All movements are staged in the CALLER'S transaction (``apply_transaction``
+        flushes but never commits), so they commit atomically with the coupon
+        release and the order status change — or roll back together on any error.
+
+        The clawback may drive the wallet balance negative if the customer has
+        already spent that cashback elsewhere. That is intentional: it records
+        the debt and keeps the append-only ledger double-entry accurate.
+        ``Wallet.balance`` has no non-negative constraint, so this is safe.
+
+        Must be called exactly once per cancellation (guarded by the callers on
+        the transition INTO the cancelled state) so effects are never doubled.
+        """
+        # 1. Coupon slot back to the public pool.
+        await OrderService._release_order_coupon(db, order)
+
+        # 2. Refund what the customer paid from their wallet.
+        wallet_deduction = order.wallet_deduction or Decimal("0")
+        if wallet_deduction > 0:
+            await WalletService.apply_transaction(
+                db,
+                user_id=order.user_id,
+                tx_type=WalletTransactionType.REFUND,
+                amount=wallet_deduction,
+                title="Order cancellation refund",
+                order_id=order.order_id,
+                order_number=order.order_number,
+                notes="Wallet balance refunded on order cancellation",
+            )
+            logger.info(
+                f"Wallet refund {wallet_deduction} for cancelled order "
+                f"{order.order_number} (user {order.user_id})"
+            )
+
+        # 3. Claw back the cashback earned on this now-cancelled order. May go
+        #    negative if already spent (records the debt).
+        cashback_earned = order.cashback_earned or Decimal("0")
+        if cashback_earned > 0:
+            await WalletService.apply_transaction(
+                db,
+                user_id=order.user_id,
+                tx_type=WalletTransactionType.SPENT,
+                amount=cashback_earned,
+                title="Order cancellation cashback reversal",
+                order_id=order.order_id,
+                order_number=order.order_number,
+                notes="Cashback clawed back on order cancellation (balance may go negative)",
+            )
+            logger.info(
+                f"Cashback clawback {cashback_earned} for cancelled order "
+                f"{order.order_number} (user {order.user_id})"
+            )
+
+    @staticmethod
     async def update_status(
         db: AsyncSession,
         order: Order,
         status: OrderStatusEnum
     ) -> Order:
         """Update order status."""
+        # Detect the transition INTO cancelled so we release the coupon exactly
+        # once (a no-op re-cancel must not double-release).
+        was_cancelled = order.status == OrderStatus.CANCELLED.value
+
         order.status = status.value
 
         # Set timestamps based on status
@@ -229,6 +510,9 @@ class OrderService:
             order.delivered_at = now
         elif status == OrderStatusEnum.CANCELLED:
             order.cancelled_at = now
+            if not was_cancelled:
+                # Reverse coupon + wallet effects atomically within this txn.
+                await OrderService._reverse_order_financials(db, order)
 
         await db.commit()
         await db.refresh(order)
@@ -285,13 +569,129 @@ class OrderService:
         if reason:
             order.notes = f"{order.notes or ''}\nCancellation reason: {reason}".strip()
 
-        # TODO: Handle refund if payment was made
+        # Reverse all financial effects (coupon slot, wallet refund, cashback
+        # clawback) atomically within this transaction. The non-cancellable
+        # guard above ensures this runs only on a real cancellation transition.
+        await OrderService._reverse_order_financials(db, order)
 
         await db.commit()
         await db.refresh(order)
 
         logger.info(f"Order {order.order_number} cancelled")
 
+        return order
+
+    # ================================================================
+    # Returns & Refunds (Module 5.5)
+    # ================================================================
+
+    @staticmethod
+    def _compute_return_refund(order: Order) -> Decimal:
+        """
+        Value to refund for a return: the returned items' subtotals.
+
+        With no ``return_items`` recorded it is a full return (sum of every
+        item's subtotal). Otherwise it sums ``unit_price × min(requested_qty,
+        ordered_qty)`` for each selected item.
+        """
+        items = order.items or []
+        return_items = order.return_items or []
+
+        if not return_items:
+            total = sum((i.subtotal or Decimal("0")) for i in items)
+            return Decimal(str(total)).quantize(Decimal("0.01"))
+
+        by_id = {str(i.order_item_id): i for i in items}
+        total = Decimal("0")
+        for ri in return_items:
+            item = by_id.get(str(ri.get("order_item_id")))
+            if item is None:
+                continue
+            qty = min(int(ri.get("quantity", 0)), item.quantity)
+            if qty > 0:
+                total += (item.unit_price or Decimal("0")) * qty
+        return total.quantize(Decimal("0.01"))
+
+    @staticmethod
+    async def request_return(
+        db: AsyncSession,
+        order: Order,
+        reason: str,
+        comments: Optional[str] = None,
+        items: Optional[list] = None,
+    ) -> Order:
+        """
+        Customer request to return a DELIVERED order. Moves it to
+        RETURN_REQUESTED and records the reason/comments/items.
+        """
+        if order.status != OrderStatus.DELIVERED.value:
+            raise ValueError("Only delivered orders can be returned.")
+
+        order.status = OrderStatus.RETURN_REQUESTED.value
+        order.return_reason = reason
+        order.return_comments = comments
+        order.return_items = (
+            [{"order_item_id": str(i.order_item_id), "quantity": i.quantity} for i in items]
+            if items
+            else None
+        )
+        order.return_requested_at = datetime.utcnow()
+
+        await db.commit()
+        await db.refresh(order)
+        logger.info(f"Return requested for order {order.order_number}: {reason}")
+        return order
+
+    @staticmethod
+    async def approve_return(db: AsyncSession, order: Order) -> Order:
+        """
+        Approve a pending return: credit the returned value to the customer's
+        wallet (REFUND) and move the order to REFUNDED — all in one transaction.
+        """
+        if order.status != OrderStatus.RETURN_REQUESTED.value:
+            raise ValueError("This order has no pending return request.")
+
+        refund = OrderService._compute_return_refund(order)
+
+        if refund > 0:
+            await WalletService.apply_transaction(
+                db,
+                user_id=order.user_id,
+                tx_type=WalletTransactionType.REFUND,
+                amount=refund,
+                title="Return refund",
+                order_id=order.order_id,
+                order_number=order.order_number,
+                notes="Wallet credited for approved return",
+            )
+
+        order.refund_amount = refund
+        order.status = OrderStatus.REFUNDED.value
+
+        await db.commit()
+        await db.refresh(order)
+        logger.info(f"Return approved for order {order.order_number}: refunded {refund}")
+
+        # Best-effort customer notification (never blocks the refund).
+        try:
+            await NotificationService.notify_order_status(
+                db, order.user_id, order.order_number, OrderStatus.REFUNDED.value
+            )
+        except Exception as exc:  # pragma: no cover - notification is best-effort
+            logger.warning(f"Return-approved notification failed for {order.order_number}: {exc}")
+
+        return order
+
+    @staticmethod
+    async def reject_return(db: AsyncSession, order: Order) -> Order:
+        """Reject a pending return: revert the order back to DELIVERED."""
+        if order.status != OrderStatus.RETURN_REQUESTED.value:
+            raise ValueError("This order has no pending return request.")
+
+        order.status = OrderStatus.DELIVERED.value
+        await db.commit()
+        await db.refresh(order)
+        logger.info(f"Return rejected for order {order.order_number}")
         return order
 
     @staticmethod

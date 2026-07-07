@@ -1,11 +1,12 @@
 """
 SRIBEESonline - Admin Settings API
 
-Super-Admin endpoints for managing application-wide settings such as
-the splash-screen animation video.
+Super-Admin endpoints for managing application-wide settings.
 
-  POST /splash-video   — upload a new splash video to S3 & save URL
-  GET  /splash-video   — retrieve current splash video details
+  GET   /                — retrieve platform settings (pricing + app config)
+  PATCH /                — update platform settings
+  POST  /splash-video    — upload a new splash video to S3 & save URL
+  GET   /splash-video    — retrieve current splash video details
 """
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from loguru import logger
@@ -16,7 +17,12 @@ from app.config.database import get_db
 from app.config.redis import get_redis
 from app.config.settings import settings
 from app.core.dependencies import require_roles
-from app.schemas.app_settings import SplashVideoResponse
+from app.schemas.app_settings import (
+    PlatformSettings,
+    PlatformSettingsResponse,
+    PlatformSettingsUpdate,
+    SplashVideoResponse,
+)
 from app.services.app_settings_service import AppSettingsService
 from app.services.storage_service import StorageService
 
@@ -36,6 +42,55 @@ ALLOWED_VIDEO_TYPES = {
 # Redis key for the cached splash config
 SPLASH_CACHE_KEY = "app:splash_config"
 SPLASH_CACHE_TTL = 60 * 60  # 1 hour
+
+
+# ============================================================================
+# Platform Settings — GET / PATCH
+# ============================================================================
+
+@router.get(
+    "",
+    response_model=PlatformSettingsResponse,
+    summary="Get platform settings",
+    description="Retrieve checkout pricing and mobile-app configuration.",
+)
+async def get_platform_settings(
+    db: AsyncSession = Depends(get_db),
+    admin=RequireSuperAdmin,
+):
+    values = await AppSettingsService.get_platform_settings(db)
+    return PlatformSettingsResponse(success=True, data=PlatformSettings(**values))
+
+
+@router.patch(
+    "",
+    response_model=PlatformSettingsResponse,
+    summary="Update platform settings",
+    description="Update any of: flat delivery fee, order tax rate (%), splash video URL.",
+)
+async def update_platform_settings(
+    data: PlatformSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+    admin=RequireSuperAdmin,
+):
+    values = await AppSettingsService.update_platform_settings(
+        db,
+        flat_delivery_fee=data.flat_delivery_fee,
+        order_tax_rate_percent=data.order_tax_rate_percent,
+        splash_video_url=data.splash_video_url,
+    )
+
+    # If the splash URL changed, drop the cached public splash config so the
+    # Flutter app picks up the new value immediately.
+    if data.splash_video_url is not None:
+        try:
+            await redis.delete(SPLASH_CACHE_KEY)
+        except Exception:  # pragma: no cover - cache invalidation is best-effort
+            logger.warning("Could not invalidate splash cache after settings update")
+
+    logger.info("Platform settings updated")
+    return PlatformSettingsResponse(success=True, data=PlatformSettings(**values))
 
 
 def _format_splash_response(setting) -> SplashVideoResponse:

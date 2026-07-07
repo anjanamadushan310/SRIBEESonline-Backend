@@ -7,6 +7,7 @@ from app.models.admin import Admin, AdminRole, AdminSession
 from app.models.app_settings import AppSetting
 from app.models.branch import Branch, PostOfficeBranchMapping
 from app.models.category import Category
+from app.models.coupon import Coupon, CouponDiscountType
 from app.models.notification import Notification, NotificationType, PushToken
 from app.models.order import Order, OrderItem, OrderStatus, PaymentStatus
 from app.models.product import (
@@ -25,6 +26,7 @@ from app.models.user import (
     Session,
     User,
 )
+from app.models.wallet import Wallet, WalletTransaction, WalletTransactionType
 from app.models.wishlist import WishlistItem
 
 __all__ = [
@@ -36,6 +38,9 @@ __all__ = [
     "Address",
     # Category
     "Category",
+    # Coupon
+    "Coupon",
+    "CouponDiscountType",
     # Product models
     "BranchInventory",
     "Product",
@@ -51,6 +56,10 @@ __all__ = [
     "OrderItem",
     "OrderStatus",
     "PaymentStatus",
+    # Wallet models
+    "Wallet",
+    "WalletTransaction",
+    "WalletTransactionType",
     # Notification models
     "Notification",
     "PushToken",

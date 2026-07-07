@@ -211,6 +211,12 @@ class RedisKeys:
         """Splash-screen config cache key."""
         return "app:splash_config"
 
+    # Phone OTP verification key
+    @staticmethod
+    def phone_otp(user_id: str) -> str:
+        """Short-lived phone-verification OTP key."""
+        return f"otp:phone:{user_id}"
+
 
 # ============================================================================
 # Redis TTL Constants (in seconds)
@@ -237,6 +243,9 @@ class RedisTTL:
     # Token TTL
     EMAIL_VERIFICATION = 24 * 60 * 60  # 24 hours
     PASSWORD_RESET = 60 * 60  # 1 hour
+
+    # Phone OTP TTL (3 minutes)
+    PHONE_OTP = 3 * 60
 
     # Branch context TTL (30 days — same as remember-me session)
     BRANCH_CONTEXT = 30 * 24 * 60 * 60

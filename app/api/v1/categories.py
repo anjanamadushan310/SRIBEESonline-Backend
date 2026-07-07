@@ -14,7 +14,8 @@ from app.schemas.category import (
 )
 from app.services.category_service import CategoryService
 
-router = APIRouter(prefix="/categories", tags=["Categories"])
+# Prefix "/categories" is applied by app/api/v1/router.py — do not repeat it here.
+router = APIRouter(tags=["Categories"])
 
 
 # ============================================================================
