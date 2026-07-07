@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - Auth Endpoints
+SRIBEESonline FastAPI Backend - Auth Endpoints
 
 Authentication routes for customer users.
 """

@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - Core Module
+SRIBEESonline FastAPI Backend - Core Module
 """
 from app.core.dependencies import (
     CurrentAdmin,

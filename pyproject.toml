@@ -1,8 +1,8 @@
 [tool.poetry]
 name = "freshcart-fastapi"
 version = "1.0.0"
-description = "FreshCart E-Commerce Backend API - FastAPI Implementation"
-authors = ["FreshCart Team"]
+description = "SRIBEESonline E-Commerce Backend API - FastAPI Implementation"
+authors = ["SRIBEESonline Team"]
 readme = "README.md"
 packages = [{include = "app"}]
 

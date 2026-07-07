@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - Security Utilities
+SRIBEESonline FastAPI Backend - Security Utilities
 
 JWT token management and password hashing using argon2.
 """

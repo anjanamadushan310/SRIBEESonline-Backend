@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - API v1 Router
+SRIBEESonline FastAPI Backend - API v1 Router
 
 Main router that aggregates all API v1 endpoints.
 """

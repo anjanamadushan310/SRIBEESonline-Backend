@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - User Model
+SRIBEESonline FastAPI Backend - User Model
 
 SQLAlchemy model for the users table.
 """

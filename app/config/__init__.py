@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - Configuration Module
+SRIBEESonline FastAPI Backend - Configuration Module
 """
 from app.config.database import (
     Base,

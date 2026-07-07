@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - Application Package
+SRIBEESonline FastAPI Backend - Application Package
 """
 from app.main import app
 

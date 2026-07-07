@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - Database Configuration
+SRIBEESonline FastAPI Backend - Database Configuration
 
 Async PostgreSQL connection using SQLAlchemy 2.0 with asyncpg.
 """

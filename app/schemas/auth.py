@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - Auth Schemas
+SRIBEESonline FastAPI Backend - Auth Schemas
 
 Pydantic models for authentication request/response validation.
 """

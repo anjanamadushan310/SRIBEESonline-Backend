@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - Auth Service
+SRIBEESonline FastAPI Backend - Auth Service
 
 Business logic for user authentication.
 """

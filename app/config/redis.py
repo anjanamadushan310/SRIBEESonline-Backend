@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - Redis Configuration
+SRIBEESonline FastAPI Backend - Redis Configuration
 
 Async Redis client using redis-py with connection pooling.
 """
@@ -121,7 +121,7 @@ def get_redis_client() -> Optional[Redis]:
 
 class RedisKeys:
     """
-    Redis key patterns for FreshCart.
+    Redis key patterns for SRIBEESonline.
 
     Maintains compatibility with Express backend key patterns.
     """

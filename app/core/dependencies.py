@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - Common Dependencies
+SRIBEESonline FastAPI Backend - Common Dependencies
 
 Reusable FastAPI dependencies for authentication, database, and utilities.
 """

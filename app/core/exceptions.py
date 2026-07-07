@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - Custom Exceptions
+SRIBEESonline FastAPI Backend - Custom Exceptions
 
 Application-specific exceptions with proper HTTP error handling.
 """

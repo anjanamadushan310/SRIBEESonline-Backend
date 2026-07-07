@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - Services Module
+SRIBEESonline FastAPI Backend - Services Module
 
 Business logic layer for all operations.
 """

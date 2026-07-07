@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - Logger Configuration
+SRIBEESonline FastAPI Backend - Logger Configuration
 
 Structured logging using Loguru with file rotation and console output.
 """

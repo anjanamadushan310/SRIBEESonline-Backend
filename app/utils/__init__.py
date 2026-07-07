@@ -1,5 +1,5 @@
 """
-FreshCart FastAPI Backend - Utilities Module
+SRIBEESonline FastAPI Backend - Utilities Module
 """
 from app.utils.logger import logger, setup_logger
 

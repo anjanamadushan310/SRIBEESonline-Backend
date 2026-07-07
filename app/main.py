@@ -199,7 +199,7 @@ async def health_check():
     """Health check endpoint."""
     return {
         "success": True,
-        "message": "FreshCart API is running",
+        "message": "SRIBEESonline API is running",
         "timestamp": __import__("datetime").datetime.utcnow().isoformat(),
         "environment": settings.app_env,
         "version": "1.0.0",
@@ -212,7 +212,7 @@ async def api_info():
     """API information endpoint."""
     return {
         "success": True,
-        "message": "FreshCart API",
+        "message": "SRIBEESonline API",
         "version": settings.api_version,
         "endpoints": {
             "auth": f"/api/{settings.api_version}/auth",
