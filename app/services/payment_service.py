@@ -6,6 +6,8 @@ from typing import Optional
 
 from loguru import logger
 
+from app.config.settings import settings
+
 
 class PaymentService:
     """

@@ -49,7 +49,7 @@ async def _branch_name_map(db: AsyncSession, branch_ids: set[UUID]) -> dict[UUID
             select(Branch.branch_id, Branch.name).where(Branch.branch_id.in_(branch_ids))
         )
     ).all()
-    return {bid: name for bid, name in rows}
+    return dict(rows)
 
 
 async def _validate_branch(db: AsyncSession, branch_id: UUID | None) -> None:

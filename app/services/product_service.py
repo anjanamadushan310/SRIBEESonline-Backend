@@ -18,6 +18,7 @@ from sqlalchemy import and_, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.branch import Branch
 from app.models.product import (
     BranchInventory,
     Product,
@@ -931,8 +932,6 @@ class ProductService:
         ``branch_id`` scopes to a single branch (branch managers); pass None for
         the all-branches view (super admins). Ordered by product name.
         """
-        from app.models.branch import Branch
-
         query = (
             select(BranchInventory, Product, Branch)
             .join(Product, BranchInventory.product_id == Product.product_id)
@@ -966,8 +965,6 @@ class ProductService:
         inventory_id: UUID,
     ) -> Optional[Tuple[BranchInventory, Product, "Branch"]]:
         """Fetch a single inventory row with its product and branch."""
-        from app.models.branch import Branch
-
         result = await db.execute(
             select(BranchInventory, Product, Branch)
             .join(Product, BranchInventory.product_id == Product.product_id)

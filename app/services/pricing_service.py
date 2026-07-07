@@ -8,7 +8,7 @@ the customer previews is guaranteed to equal the number they are charged.
 All money is computed with ``Decimal`` and quantized to 2 places.
 """
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Dict, List, Optional
 
 from app.config.settings import settings

@@ -7,7 +7,6 @@ invoice endpoints surface a clear 503 when it isn't installed.
 """
 from datetime import datetime
 from io import BytesIO
-from typing import Optional
 
 from loguru import logger
 

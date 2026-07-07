@@ -175,7 +175,7 @@ async def list_orders(
         rows = (
             await db.execute(select(Branch.branch_id, Branch.name).where(Branch.branch_id.in_(branch_ids)))
         ).all()
-        names = {bid: name for bid, name in rows}
+        names = dict(rows)
 
     return {
         "success": True,
