@@ -184,7 +184,15 @@ class Settings(BaseSettings):
     # CORS Settings
     # =========================================================================
     cors_origins: List[str] = Field(
-        default=["http://localhost:3001", "http://localhost:19006", "http://localhost:8081"],
+        default=[
+            "http://localhost:3001",
+            "http://localhost:19006",
+            "http://localhost:8081",
+            # Production web/admin origins (also covered by the regex in main.py).
+            "https://sribees.com",
+            "https://www.sribees.com",
+            "https://admin.sribees.com",
+        ],
         description="Allowed CORS origins"
     )
     cors_allow_credentials: bool = Field(default=True, description="Allow credentials")

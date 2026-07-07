@@ -114,16 +114,6 @@ app = FastAPI(
 # Middleware
 # ============================================================================
 
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.sribees\.com|https://sribees\.com",
-    allow_credentials=settings.cors_allow_credentials,
-    allow_methods=settings.cors_allow_methods,
-    allow_headers=settings.cors_allow_headers,
-)
-
 # Security middleware (headers, request ID, rate limiting)
 from app.core.rate_limiter import RateLimitMiddleware
 from app.core.security_headers import configure_security_middleware
@@ -147,6 +137,20 @@ async def log_requests(request: Request, call_next):
     )
     response = await call_next(request)
     return response
+
+
+# CORS middleware — added LAST so it is the OUTERMOST middleware. This
+# guarantees every response, including rate-limit rejections and error
+# responses from inner middleware, carries the Access-Control-Allow-Origin
+# header (otherwise the browser reports a real 4xx/5xx as an opaque CORS error).
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app|https://([a-z0-9-]+\.)*sribees\.com",
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=settings.cors_allow_methods,
+    allow_headers=settings.cors_allow_headers,
+)
 
 
 # ============================================================================
