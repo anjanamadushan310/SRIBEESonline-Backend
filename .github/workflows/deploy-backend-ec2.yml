@@ -153,9 +153,11 @@ jobs:
             sudo docker compose up -d postgres_db redis_cache
 
             # Resolve DB credentials from .env, falling back to the compose defaults.
-            DB_USER=$(grep -m1 '^POSTGRES_USER=' .env 2>/dev/null | cut -d '=' -f2- | cut -d '#' -f1 | tr -d '[:space:]')
+            # `|| true` guards against `set -e`: grep exits 1 when the key is
+            # absent (the compose hardcodes these), which would otherwise abort.
+            DB_USER=$(grep -m1 '^POSTGRES_USER=' .env 2>/dev/null | cut -d '=' -f2- | cut -d '#' -f1 | tr -d '[:space:]' || true)
             DB_USER="${DB_USER:-sribees_user}"
-            DB_NAME=$(grep -m1 '^POSTGRES_DB=' .env 2>/dev/null | cut -d '=' -f2- | cut -d '#' -f1 | tr -d '[:space:]')
+            DB_NAME=$(grep -m1 '^POSTGRES_DB=' .env 2>/dev/null | cut -d '=' -f2- | cut -d '#' -f1 | tr -d '[:space:]' || true)
             DB_NAME="${DB_NAME:-sribeesonline}"
 
             echo "Waiting for Postgres ($DB_USER/$DB_NAME) to accept connections..."
