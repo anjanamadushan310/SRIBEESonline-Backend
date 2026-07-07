@@ -41,8 +41,12 @@ CREATE TRIGGER trg_app_settings_updated_at
     FOR EACH ROW EXECUTE FUNCTION update_app_settings_updated_at();
 
 -- 4. Seed default splash video entry (placeholder URL — will be updated via Admin API)
-INSERT INTO app_settings (key, value, description, is_active)
+-- setting_id is supplied explicitly: when the table is created by SQLAlchemy
+-- create_all() the PK default is Python-side (uuid.uuid4), so the DB column has
+-- NO default and an INSERT that omits it would violate the NOT NULL constraint.
+INSERT INTO app_settings (setting_id, key, value, description, is_active)
 VALUES (
+    gen_random_uuid(),
     'splash_video_url',
     NULL,
     'URL of the splash-screen animation video shown when the Flutter app opens',
