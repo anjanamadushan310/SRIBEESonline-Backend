@@ -27,6 +27,13 @@ class BranchBase(BaseModel):
 class BranchCreate(BranchBase):
     """Create branch request."""
     manager_id: Optional[UUID] = None
+    coverage_post_offices: Optional[list[str]] = Field(
+        None,
+        description=(
+            "Post Office names this branch serves. Synced to "
+            "PostOfficeBranchMapping in the same transaction."
+        ),
+    )
 
 
 class BranchUpdate(BaseModel):
@@ -40,6 +47,14 @@ class BranchUpdate(BaseModel):
     phone: Optional[str] = Field(None, max_length=20)
     manager_id: Optional[UUID] = None
     is_active: Optional[bool] = None
+    coverage_post_offices: Optional[list[str]] = Field(
+        None,
+        description=(
+            "Full replacement set of Post Offices this branch serves. When "
+            "provided, the branch's PostOfficeBranchMapping rows are synced to "
+            "exactly this list. Omit to leave coverage unchanged."
+        ),
+    )
 
 
 class BranchResponse(BaseModel):
@@ -330,6 +345,38 @@ class AdminMappingUpdateRequest(BaseModel):
     @field_validator("province", "district")
     @classmethod
     def normalize_location(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return v.strip().title()
+        return v
+
+
+# =============================================================================
+# Post Office Directory (Master List / "Delivery Zones") Schemas
+# =============================================================================
+
+class PostOfficeDirectoryCreate(BaseModel):
+    """Create a master Post Office directory entry — Super Admin only."""
+    post_office: str = Field(..., min_length=1, max_length=100)
+    district: str = Field(..., min_length=1, max_length=100)
+    province: str = Field(..., min_length=1, max_length=100)
+    is_active: bool = True
+
+    @field_validator("post_office", "district", "province")
+    @classmethod
+    def normalize(cls, v: str) -> str:
+        return v.strip().title()
+
+
+class PostOfficeDirectoryUpdate(BaseModel):
+    """Update a master Post Office directory entry — all fields optional."""
+    post_office: Optional[str] = Field(None, min_length=1, max_length=100)
+    district: Optional[str] = Field(None, min_length=1, max_length=100)
+    province: Optional[str] = Field(None, min_length=1, max_length=100)
+    is_active: Optional[bool] = None
+
+    @field_validator("post_office", "district", "province")
+    @classmethod
+    def normalize(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
             return v.strip().title()
         return v

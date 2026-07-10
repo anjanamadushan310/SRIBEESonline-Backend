@@ -162,3 +162,68 @@ class PostOfficeBranchMapping(Base):
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class PostOfficeDirectory(Base):
+    """
+    Master directory of Sri Lankan Post Offices (the "Delivery Zones" catalog).
+
+    This is the source-of-truth list, independent of branch coverage: every
+    Post Office is tagged with its District and Province. The Admin Dashboard
+    manages it (Settings → Delivery Zones), and the Branch form reads from it
+    to offer coverage-area (Post Office) options for the selected district.
+
+    Assigning coverage on a Branch writes ``PostOfficeBranchMapping`` rows; this
+    directory just says "which post offices exist and where", not "who serves
+    them".
+    """
+
+    __tablename__ = "post_office_directory"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    post_office: Mapped[str] = mapped_column(
+        String(100),
+        unique=True,
+        nullable=False,
+        index=True,
+        comment="Post office name — unique across Sri Lanka",
+    )
+    district: Mapped[str] = mapped_column(String(100), nullable=False)
+    province: Mapped[str] = mapped_column(String(100), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("idx_po_directory_province", "province"),
+        Index("idx_po_directory_district", "district"),
+        Index("idx_po_directory_province_district", "province", "district"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PostOfficeDirectory {self.post_office} ({self.district}, {self.province})>"
+
+    def to_dict(self) -> dict:
+        """Convert directory entry to dictionary (snake_case wire)."""
+        return {
+            "id": str(self.id),
+            "post_office": self.post_office,
+            "district": self.district,
+            "province": self.province,
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }

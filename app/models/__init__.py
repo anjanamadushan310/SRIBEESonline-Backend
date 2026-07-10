@@ -5,7 +5,7 @@ SQLAlchemy ORM models for all database tables.
 """
 from app.models.admin import Admin, AdminRole, AdminSession
 from app.models.app_settings import AppSetting
-from app.models.branch import Branch, PostOfficeBranchMapping
+from app.models.branch import Branch, PostOfficeBranchMapping, PostOfficeDirectory
 from app.models.category import Category
 from app.models.coupon import Coupon, CouponDiscountType
 from app.models.notification import Notification, NotificationType, PushToken
@@ -71,6 +71,7 @@ __all__ = [
     # Branch models
     "Branch",
     "PostOfficeBranchMapping",
+    "PostOfficeDirectory",
     # App settings
     "AppSetting",
 ]

@@ -14,7 +14,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from loguru import logger
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
@@ -23,6 +23,7 @@ from app.models.admin import Admin
 from app.models.branch import Branch, PostOfficeBranchMapping
 from app.models.product import BranchInventory
 from app.schemas.branch import BranchCreate, BranchUpdate
+from app.services import branch_service
 
 router = APIRouter(
     dependencies=[Depends(require_roles("super_admin"))],
@@ -30,7 +31,7 @@ router = APIRouter(
 )
 
 
-def _format_branch(b: Branch) -> dict:
+def _format_branch(b: Branch, coverage_post_offices: list[str] | None = None) -> dict:
     return {
         "branch_id": str(b.branch_id),
         "name": b.name,
@@ -42,6 +43,7 @@ def _format_branch(b: Branch) -> dict:
         "phone": b.phone,
         "manager_id": str(b.manager_id) if b.manager_id else None,
         "is_active": b.is_active,
+        "coverage_post_offices": coverage_post_offices or [],
         "created_at": b.created_at.isoformat() if b.created_at else None,
         "updated_at": b.updated_at.isoformat() if b.updated_at else None,
     }
@@ -70,14 +72,19 @@ async def list_branches(
     include_inactive: bool = Query(True, description="Include inactive branches"),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all branches (active and inactive by default)."""
+    """List all branches (active and inactive by default), with coverage."""
     stmt = select(Branch).order_by(Branch.name)
     if not include_inactive:
         stmt = stmt.where(Branch.is_active.is_(True))
     branches = (await db.execute(stmt)).scalars().all()
+    coverage = await branch_service.get_coverage_map(db)
     return {
         "success": True,
-        "data": {"branches": [_format_branch(b) for b in branches]},
+        "data": {
+            "branches": [
+                _format_branch(b, coverage.get(b.branch_id, [])) for b in branches
+            ]
+        },
     }
 
 
@@ -104,12 +111,20 @@ async def create_branch(
         manager_id=data.manager_id,
     )
     db.add(branch)
+    # Flush (not commit) so the branch gets a PK before its coverage mappings
+    # are written, then commit once so branch + coverage move together.
+    await db.flush()
+    if data.coverage_post_offices is not None:
+        await branch_service.sync_branch_coverage(
+            db, branch, data.coverage_post_offices
+        )
     await db.commit()
     await db.refresh(branch)
+    coverage = await branch_service.get_branch_coverage(db, branch.branch_id)
     logger.info(f"[admin] Branch created: {branch.branch_id} - {branch.name}")
     return {
         "success": True,
-        "data": _format_branch(branch),
+        "data": _format_branch(branch, coverage),
         "message": "Branch created successfully",
     }
 
@@ -123,6 +138,8 @@ async def update_branch(
     """Update a branch (name, code, address, district, province, phone, status)."""
     branch = await _get_branch_or_404(db, branch_id)
     fields = data.model_dump(exclude_unset=True)
+    # coverage_post_offices is not a Branch column — sync it separately.
+    coverage_post_offices = fields.pop("coverage_post_offices", None)
 
     new_code = fields.get("code")
     if new_code and await _code_taken(db, new_code, exclude_id=branch_id):
@@ -131,16 +148,30 @@ async def update_branch(
             detail="A branch with this code already exists",
         )
 
+    name_changed = "name" in fields and fields["name"] and fields["name"] != branch.name
     for key, value in fields.items():
         if hasattr(branch, key):
             setattr(branch, key, value)
+    await db.flush()
+
+    # If coverage was supplied, reconcile the branch's Post Office mappings.
+    if coverage_post_offices is not None:
+        await branch_service.sync_branch_coverage(db, branch, coverage_post_offices)
+    elif name_changed:
+        # Keep the denormalized branch_name on existing mappings in sync.
+        await db.execute(
+            update(PostOfficeBranchMapping)
+            .where(PostOfficeBranchMapping.branch_id == branch.branch_id)
+            .values(branch_name=branch.name)
+        )
 
     await db.commit()
     await db.refresh(branch)
+    coverage = await branch_service.get_branch_coverage(db, branch.branch_id)
     logger.info(f"[admin] Branch updated: {branch.branch_id}")
     return {
         "success": True,
-        "data": _format_branch(branch),
+        "data": _format_branch(branch, coverage),
         "message": "Branch updated successfully",
     }
 

@@ -23,7 +23,11 @@ from app.core.exceptions import (
     LocationNotServedError,
     NotFoundError,
 )
-from app.models.branch import Branch, PostOfficeBranchMapping
+from app.models.branch import (
+    Branch,
+    PostOfficeBranchMapping,
+    PostOfficeDirectory,
+)
 from app.models.user import Address
 from app.utils.logger import logger
 
@@ -591,3 +595,245 @@ async def delete_mapping(
 
     logger.info(f"Mapping deleted: {mapping_id}")
     return True
+
+
+# ============================================================================
+# Post Office Directory (Master List / "Delivery Zones") CRUD
+# ============================================================================
+
+async def list_directory(
+    db: AsyncSession,
+    province: Optional[str] = None,
+    district: Optional[str] = None,
+    active_only: bool = False,
+) -> list[PostOfficeDirectory]:
+    """Return master Post Office directory entries with optional filters."""
+    stmt = select(PostOfficeDirectory).order_by(
+        PostOfficeDirectory.province,
+        PostOfficeDirectory.district,
+        PostOfficeDirectory.post_office,
+    )
+    if province:
+        stmt = stmt.where(PostOfficeDirectory.province == province.strip().title())
+    if district:
+        stmt = stmt.where(PostOfficeDirectory.district == district.strip().title())
+    if active_only:
+        stmt = stmt.where(PostOfficeDirectory.is_active.is_(True))
+
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_directory_entry(
+    db: AsyncSession,
+    location_id: UUID,
+) -> Optional[PostOfficeDirectory]:
+    """Fetch a single directory entry by primary key."""
+    result = await db.execute(
+        select(PostOfficeDirectory).where(PostOfficeDirectory.id == location_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def create_directory_entry(
+    db: AsyncSession,
+    *,
+    post_office: str,
+    district: str,
+    province: str,
+    is_active: bool = True,
+) -> PostOfficeDirectory:
+    """
+    Add a Post Office to the master directory.
+
+    Raises ``DuplicateError`` if the post office already exists (names are
+    unique across Sri Lanka).
+    """
+    po = post_office.strip().title()
+    dup = await db.execute(
+        select(PostOfficeDirectory.id).where(PostOfficeDirectory.post_office == po)
+    )
+    if dup.scalar_one_or_none() is not None:
+        raise DuplicateError(
+            field="post_office",
+            message=f"Post Office '{po}' already exists in the directory",
+        )
+
+    entry = PostOfficeDirectory(
+        post_office=po,
+        district=district.strip().title(),
+        province=province.strip().title(),
+        is_active=is_active,
+    )
+    db.add(entry)
+    await db.commit()
+    await db.refresh(entry)
+    logger.info(f"Directory entry created: {entry.post_office} ({entry.district})")
+    return entry
+
+
+async def update_directory_entry(
+    db: AsyncSession,
+    location_id: UUID,
+    **fields,
+) -> PostOfficeDirectory:
+    """Update a directory entry. Only non-``None`` fields are applied.
+
+    If the post office name changes, guards against colliding with another
+    existing entry.
+    """
+    entry = await get_directory_entry(db, location_id)
+    if entry is None:
+        raise NotFoundError(resource="Post Office", identifier=str(location_id))
+
+    new_po = fields.get("post_office")
+    if new_po and new_po != entry.post_office:
+        dup = await db.execute(
+            select(PostOfficeDirectory.id).where(
+                PostOfficeDirectory.post_office == new_po,
+                PostOfficeDirectory.id != location_id,
+            )
+        )
+        if dup.scalar_one_or_none() is not None:
+            raise DuplicateError(
+                field="post_office",
+                message=f"Post Office '{new_po}' already exists in the directory",
+            )
+
+    for key, value in fields.items():
+        if value is not None and hasattr(entry, key):
+            setattr(entry, key, value)
+
+    await db.commit()
+    await db.refresh(entry)
+    logger.info(f"Directory entry updated: {entry.id}")
+    return entry
+
+
+async def delete_directory_entry(
+    db: AsyncSession,
+    location_id: UUID,
+) -> bool:
+    """Hard-delete a directory entry. Returns ``True`` if a row was removed."""
+    entry = await get_directory_entry(db, location_id)
+    if entry is None:
+        raise NotFoundError(resource="Post Office", identifier=str(location_id))
+
+    await db.delete(entry)
+    await db.commit()
+    logger.info(f"Directory entry deleted: {location_id}")
+    return True
+
+
+# ============================================================================
+# Branch coverage sync (Post Office → Branch mappings)
+# ============================================================================
+
+async def get_branch_coverage(db: AsyncSession, branch_id: UUID) -> list[str]:
+    """Return the sorted Post Office names currently mapped to a branch."""
+    result = await db.execute(
+        select(PostOfficeBranchMapping.post_office)
+        .where(PostOfficeBranchMapping.branch_id == branch_id)
+        .order_by(PostOfficeBranchMapping.post_office)
+    )
+    return [row[0] for row in result.all()]
+
+
+async def get_coverage_map(db: AsyncSession) -> dict[UUID, list[str]]:
+    """Return {branch_id: [post_office, ...]} for all mappings (batch, for lists)."""
+    result = await db.execute(
+        select(
+            PostOfficeBranchMapping.branch_id,
+            PostOfficeBranchMapping.post_office,
+        ).order_by(PostOfficeBranchMapping.post_office)
+    )
+    coverage: dict[UUID, list[str]] = {}
+    for branch_id, post_office in result.all():
+        coverage.setdefault(branch_id, []).append(post_office)
+    return coverage
+
+
+async def sync_branch_coverage(
+    db: AsyncSession,
+    branch: Branch,
+    post_offices: list[str],
+) -> None:
+    """
+    Make ``PostOfficeBranchMapping`` reflect exactly *post_offices* for *branch*.
+
+    Idempotent set-reconciliation, executed **inside the caller's transaction**
+    (no commit here — the branch create/update endpoint commits once so the
+    branch row and its coverage move together):
+
+      * A post office already mapped to this branch → kept / refreshed.
+      * A post office mapped to a *different* branch → reassigned to this branch
+        (post_office is globally unique, so the latest branch to claim it wins).
+      * A post office in the branch's old coverage but not in the new set → its
+        mapping is removed.
+
+    District/Province for each mapping are looked up from the master directory,
+    falling back to the branch's own district/province.
+    """
+    desired = {po.strip().title() for po in post_offices if po and po.strip()}
+
+    # Directory lookup for the desired post offices (for district/province).
+    directory: dict[str, PostOfficeDirectory] = {}
+    if desired:
+        rows = await db.execute(
+            select(PostOfficeDirectory).where(
+                PostOfficeDirectory.post_office.in_(desired)
+            )
+        )
+        directory = {e.post_office: e for e in rows.scalars().all()}
+
+    # Existing mappings for the desired POs (may belong to other branches) …
+    existing_by_po: dict[str, PostOfficeBranchMapping] = {}
+    if desired:
+        rows = await db.execute(
+            select(PostOfficeBranchMapping).where(
+                PostOfficeBranchMapping.post_office.in_(desired)
+            )
+        )
+        existing_by_po = {m.post_office: m for m in rows.scalars().all()}
+
+    # … and all mappings currently owned by this branch (to prune removed POs).
+    owned_rows = await db.execute(
+        select(PostOfficeBranchMapping).where(
+            PostOfficeBranchMapping.branch_id == branch.branch_id
+        )
+    )
+    owned = list(owned_rows.scalars().all())
+
+    for po in desired:
+        entry = directory.get(po)
+        district = entry.district if entry else branch.district
+        province = entry.province if entry else branch.province
+        mapping = existing_by_po.get(po)
+        if mapping is not None:
+            mapping.branch_id = branch.branch_id
+            mapping.branch_name = branch.name
+            mapping.district = district
+            mapping.province = province
+            mapping.is_active = True
+        else:
+            db.add(
+                PostOfficeBranchMapping(
+                    post_office=po,
+                    branch_id=branch.branch_id,
+                    branch_name=branch.name,
+                    district=district,
+                    province=province,
+                    is_active=True,
+                )
+            )
+
+    # Remove this branch's mappings that are no longer in the desired set.
+    for mapping in owned:
+        if mapping.post_office not in desired:
+            await db.delete(mapping)
+
+    await db.flush()
+    logger.info(
+        f"Synced coverage for branch {branch.branch_id}: "
+        f"{len(desired)} post office(s)."
+    )
