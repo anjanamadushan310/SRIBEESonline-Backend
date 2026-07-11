@@ -205,13 +205,15 @@ async def upload_splash_video(
             content_type=file.content_type,
         )
     except StorageError as exc:
+        # 500, not 502 — see admin_catalog._upload_image. The storage backend is
+        # in-process, so this is a server fault, not an upstream gateway's.
         logger.error(f"Splash video upload failed: {exc}")
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "success": False,
                 "error": {
-                    "message": "Failed to store the video. Please try again.",
+                    "message": "Could not store the video on the server. Please try again.",
                     "code": "STORAGE_UPLOAD_FAILED",
                 },
             },

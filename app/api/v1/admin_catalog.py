@@ -156,10 +156,13 @@ async def _upload_image(file: UploadFile, folder: str) -> str:
             content_type=file.content_type,
         )
     except StorageError as exc:
+        # 500, not 502. The storage backend is in-process (local disk), so a
+        # write failure is our fault — reporting it as "bad gateway" points the
+        # next person at nginx and the workers, which are fine.
         logger.error(f"Image upload failed ({folder}): {exc}")
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to store the image. Please try again.",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not store the image on the server. Please try again.",
         )
 
 

@@ -177,6 +177,21 @@ jobs:
               exit 1
             fi
 
+            echo "==== 7a0. REPAIR MEDIA VOLUME OWNERSHIP ===="
+            # The app runs as non-root (appuser, uid 1000). Docker creates a
+            # volume's mount point owned by ROOT when the path does not exist in
+            # the image — which is what happened on the first deploy of the local
+            # storage backend, so every upload failed with PermissionError and
+            # the route returned 502 while the app itself stayed healthy.
+            #
+            # The image now ships /app/media owned by appuser, which fixes any
+            # NEW volume. This step repairs the volume that already exists: a
+            # one-off ROOT container chowns it. Idempotent, and cheap enough to
+            # leave in permanently as a guard against the same trap returning.
+            sudo docker compose run --rm --no-deps --user root \
+              fastapi_backend sh -c 'mkdir -p /app/media && chown -R 1000:1000 /app/media' \
+              || echo "WARNING: could not repair media volume ownership"
+
             echo "==== 7a. EXTRACT MIGRATIONS FROM THE IMAGE ===="
             # The .sql files ship inside the backend image at /app/migrations.
             # Copy them out of a NON-RUNNING container created from the image, so
