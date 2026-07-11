@@ -99,6 +99,64 @@ async def _validate_parent(
         )
 
 
+def _validate_category_image(parent_id: Optional[UUID], image_url: Optional[str]) -> None:
+    """
+    Images belong to top-level categories only.
+
+    The mobile home screen renders one tile per top-level category *from its
+    image*; sub-categories appear as text beneath their parent and have nowhere
+    to show one. Accepting an image on a sub-category would store a file that no
+    screen can ever display, so reject it rather than silently keep it.
+    """
+    if parent_id is not None and image_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Images are only supported on top-level categories. "
+                "A sub-category inherits its parent's imagery."
+            ),
+        )
+
+
+async def _upload_image(file: UploadFile, folder: str) -> str:
+    """Validate an uploaded image and push it to object storage; return its URL."""
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Invalid file type '{file.content_type}'. "
+                f"Allowed: {', '.join(sorted(ALLOWED_IMAGE_TYPES))}"
+            ),
+        )
+
+    max_bytes = settings.s3_max_upload_size_mb * 1024 * 1024
+    contents = await file.read()
+    if len(contents) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"File too large ({len(contents) / 1024 / 1024:.1f} MB). "
+                f"Maximum allowed: {settings.s3_max_upload_size_mb} MB."
+            ),
+        )
+
+    import io
+
+    try:
+        return StorageService.upload_fileobj(
+            fileobj=io.BytesIO(contents),
+            filename=file.filename or "image.jpg",
+            folder=folder,
+            content_type=file.content_type,
+        )
+    except RuntimeError as exc:
+        logger.error(f"Image upload failed ({folder}): {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to upload image to storage. Please try again.",
+        )
+
+
 def _format_category(cat) -> dict:
     """Serialize a Category ORM row (or the dict from CategoryService.get_all)."""
     if isinstance(cat, dict):
@@ -140,6 +198,30 @@ async def list_categories(
     }
 
 
+@router.post(
+    "/categories/upload-image",
+    response_model=dict,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_category_image(
+    file: UploadFile = File(..., description="Image file (JPEG/PNG/WebP/GIF)"),
+):
+    """
+    Upload a category tile image and return its URL.
+
+    Declared before ``/categories/{category_id}`` so that path parameter does
+    not swallow "upload-image". The returned URL is passed back as ``image_url``
+    when the category is created or updated, which lets the admin upload before
+    the category exists.
+    """
+    url = await _upload_image(file, folder="categories")
+    return {
+        "success": True,
+        "data": {"image_url": url, "filename": file.filename},
+        "message": "Image uploaded successfully",
+    }
+
+
 @router.post("/categories", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def create_category(
     data: CategoryCreate,
@@ -154,6 +236,7 @@ async def create_category(
         )
 
     await _validate_parent(db, data.parent_category_id)
+    _validate_category_image(data.parent_category_id, data.image_url)
 
     try:
         category = await CategoryService.create(db, data)
@@ -193,8 +276,16 @@ async def update_category(
                 detail="Category with this slug already exists",
             )
 
-    if "parent_category_id" in data.model_dump(exclude_unset=True):
+    fields = data.model_dump(exclude_unset=True)
+    if "parent_category_id" in fields:
         await _validate_parent(db, data.parent_category_id, self_id=category.category_id)
+
+    # Validate the pair the category ENDS UP with: promoting a top-level category
+    # with an image into a sub-category changes only parent_category_id, and the
+    # now-illegal image would otherwise survive untouched.
+    next_parent = fields.get("parent_category_id", category.parent_category_id)
+    next_image = fields.get("image_url", category.image_url)
+    _validate_category_image(next_parent, next_image)
 
     try:
         updated = await CategoryService.update(db, category, data)
