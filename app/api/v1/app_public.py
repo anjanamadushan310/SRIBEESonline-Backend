@@ -22,8 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
 from app.config.redis import get_redis
-from app.services.app_settings_service import AppSettingsService
 from app.core.media import media_url_for_client
+from app.services.app_settings_service import AppSettingsService
 
 router = APIRouter()
 

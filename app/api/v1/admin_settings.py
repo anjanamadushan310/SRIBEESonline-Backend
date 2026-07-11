@@ -17,6 +17,7 @@ from app.config.database import get_db
 from app.config.redis import get_redis
 from app.config.settings import settings
 from app.core.dependencies import require_roles
+from app.core.media import media_url
 from app.schemas.app_settings import (
     PlatformSettings,
     PlatformSettingsResponse,
@@ -24,7 +25,6 @@ from app.schemas.app_settings import (
     SplashVideoResponse,
 )
 from app.services.app_settings_service import AppSettingsService
-from app.core.media import media_url
 from app.services.storage import StorageError, get_storage
 
 router = APIRouter()
