@@ -242,6 +242,32 @@ app.include_router(v1_router, prefix="/api")
 
 
 # ============================================================================
+# Media (local disk storage backend)
+# ============================================================================
+# Serve uploaded media when the local provider is active. With STORAGE_BACKEND=s3
+# the files live in the bucket and are fetched straight from MEDIA_BASE_URL, so
+# nothing is mounted here — the app never proxies them.
+if (settings.storage_backend or "local").strip().lower() == "local":
+    from pathlib import Path
+
+    from fastapi.staticfiles import StaticFiles
+
+    _media_root = Path(settings.media_root)
+    # StaticFiles refuses to start if the directory is missing, which on a fresh
+    # volume it always is.
+    _media_root.mkdir(parents=True, exist_ok=True)
+
+    app.mount(
+        f"/{settings.media_url_prefix.strip('/')}",
+        StaticFiles(directory=str(_media_root)),
+        name="media",
+    )
+    logger.info(
+        f"Serving media from {_media_root} at /{settings.media_url_prefix.strip('/')}"
+    )
+
+
+# ============================================================================
 # Development Server
 # ============================================================================
 

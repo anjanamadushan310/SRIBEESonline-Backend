@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.config.redis import get_redis
 from app.core.dependencies import get_current_admin, get_current_user
+from app.core.media import media_url
 from app.schemas.product import (
     ProductCreate,
     ProductImageCreate,
@@ -91,7 +92,7 @@ def format_product(
             "category_id": str(product.category.category_id),
             "name": product.category.name,
             "slug": product.category.slug,
-            "image_url": product.category.image_url,
+            "image_url": media_url(product.category.image_url),
         }
     else:
         data["category"] = None
@@ -103,7 +104,7 @@ def format_product(
             "category_id": str(subcategory.category_id),
             "name": subcategory.name,
             "slug": subcategory.slug,
-            "image_url": subcategory.image_url,
+            "image_url": media_url(subcategory.image_url),
         }
     else:
         data["subcategory"] = None
@@ -112,7 +113,7 @@ def format_product(
     data["images"] = [
         {
             "image_id": str(img.image_id),
-            "image_url": img.image_url,
+            "image_url": media_url(img.image_url),
             "alt_text": img.alt_text,
             "is_primary": img.is_primary,
             "sort_order": img.sort_order,
@@ -131,7 +132,7 @@ def format_product(
                 "price": float(v.price) if v.price else 0,
                 "compare_at_price": float(v.compare_at_price) if v.compare_at_price else None,
                 "stock_quantity": v.stock_quantity,
-                "image_url": v.image_url,
+                "image_url": media_url(v.image_url),
                 "is_active": v.is_active,
             }
             for v in product.variants
@@ -543,7 +544,7 @@ async def get_product_variants(
                     "price": float(v.price) if v.price else 0,
                     "compare_at_price": float(v.compare_at_price) if v.compare_at_price else None,
                     "stock_quantity": v.stock_quantity,
-                    "image_url": v.image_url,
+                    "image_url": media_url(v.image_url),
                     "is_active": v.is_active,
                 }
                 for v in variants
@@ -709,7 +710,7 @@ async def add_product_image(
             "success": True,
             "data": {
                 "image_id": str(image.image_id),
-                "image_url": image.image_url,
+                "image_url": media_url(image.image_url),
                 "alt_text": image.alt_text,
                 "is_primary": image.is_primary,
                 "sort_order": image.sort_order,
@@ -784,7 +785,7 @@ async def add_product_variant(
                 "price": float(variant.price) if variant.price else 0,
                 "compare_at_price": float(variant.compare_at_price) if variant.compare_at_price else None,
                 "stock_quantity": variant.stock_quantity,
-                "image_url": variant.image_url,
+                "image_url": media_url(variant.image_url),
                 "is_active": variant.is_active,
             },
             "message": "Variant added successfully"

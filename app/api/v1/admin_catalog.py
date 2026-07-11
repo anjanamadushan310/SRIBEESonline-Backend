@@ -34,11 +34,12 @@ from app.api.v1.products import format_product
 from app.config.database import get_db
 from app.config.settings import settings
 from app.core.dependencies import require_roles
+from app.core.media import media_path, media_url
 from app.schemas.category import CategoryCreate, CategoryUpdate
 from app.schemas.product import ProductCreate, ProductImageCreate, ProductUpdate
 from app.services.category_service import CategoryService
 from app.services.product_service import ProductService
-from app.services.storage_service import StorageService
+from app.services.storage import StorageError, get_storage
 
 # Catalog management is limited to Super Admins and Inventory Managers.
 router = APIRouter(
@@ -119,7 +120,12 @@ def _validate_category_image(parent_id: Optional[UUID], image_url: Optional[str]
 
 
 async def _upload_image(file: UploadFile, folder: str) -> str:
-    """Validate an uploaded image and push it to object storage; return its URL."""
+    """
+    Validate an uploaded image, store it, and return its **relative path**.
+
+    The path — not an absolute URL — is what callers persist. ``media_url()``
+    turns it into a fetchable URL at serialization time.
+    """
     if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -129,36 +135,38 @@ async def _upload_image(file: UploadFile, folder: str) -> str:
             ),
         )
 
-    max_bytes = settings.s3_max_upload_size_mb * 1024 * 1024
+    max_mb = settings.media_max_upload_size_mb
     contents = await file.read()
-    if len(contents) > max_bytes:
+    if len(contents) > max_mb * 1024 * 1024:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=(
                 f"File too large ({len(contents) / 1024 / 1024:.1f} MB). "
-                f"Maximum allowed: {settings.s3_max_upload_size_mb} MB."
+                f"Maximum allowed: {max_mb} MB."
             ),
         )
 
     import io
 
     try:
-        return StorageService.upload_fileobj(
+        return get_storage().save(
             fileobj=io.BytesIO(contents),
             filename=file.filename or "image.jpg",
             folder=folder,
             content_type=file.content_type,
         )
-    except RuntimeError as exc:
+    except StorageError as exc:
         logger.error(f"Image upload failed ({folder}): {exc}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to upload image to storage. Please try again.",
+            detail="Failed to store the image. Please try again.",
         )
 
 
 def _format_category(cat) -> dict:
     """Serialize a Category ORM row (or the dict from CategoryService.get_all)."""
+    # image_url is stored as a relative path; resolve it to an absolute URL here,
+    # at the edge, so clients never have to know where media happens to live.
     if isinstance(cat, dict):
         parent = cat.get("parent_category_id")
         return {
@@ -166,7 +174,7 @@ def _format_category(cat) -> dict:
             "name": cat["name"],
             "slug": cat["slug"],
             "description": cat.get("description"),
-            "image_url": cat.get("image_url"),
+            "image_url": media_url(cat.get("image_url")),
             "parent_category_id": str(parent) if parent else None,
             "is_active": cat["is_active"],
             "product_count": cat.get("product_count", 0),
@@ -176,7 +184,7 @@ def _format_category(cat) -> dict:
         "name": cat.name,
         "slug": cat.slug,
         "description": cat.description,
-        "image_url": cat.image_url,
+        "image_url": media_url(cat.image_url),
         "parent_category_id": str(cat.parent_category_id) if cat.parent_category_id else None,
         "is_active": cat.is_active,
     }
@@ -214,10 +222,10 @@ async def upload_category_image(
     when the category is created or updated, which lets the admin upload before
     the category exists.
     """
-    url = await _upload_image(file, folder="categories")
+    path = await _upload_image(file, folder="categories")
     return {
         "success": True,
-        "data": {"image_url": url, "filename": file.filename},
+        "data": {"image_url": media_url(path), "filename": file.filename},
         "message": "Image uploaded successfully",
     }
 
@@ -237,6 +245,10 @@ async def create_category(
 
     await _validate_parent(db, data.parent_category_id)
     _validate_category_image(data.parent_category_id, data.image_url)
+
+    # The admin posts back the absolute URL the upload endpoint handed it; store
+    # only the relative path so no origin ever enters the database.
+    data.image_url = media_path(data.image_url)
 
     try:
         category = await CategoryService.create(db, data)
@@ -286,6 +298,10 @@ async def update_category(
     next_parent = fields.get("parent_category_id", category.parent_category_id)
     next_image = fields.get("image_url", category.image_url)
     _validate_category_image(next_parent, next_image)
+
+    # Store only the relative path (see create_category).
+    if "image_url" in fields:
+        data.image_url = media_path(data.image_url)
 
     try:
         updated = await CategoryService.update(db, category, data)
@@ -549,51 +565,20 @@ async def upload_product_image(
     file: UploadFile = File(..., description="Image file (JPEG/PNG/WebP/GIF)"),
 ):
     """
-    Upload a single product image to object storage and return its URL.
+    Upload a single product image and return its URL.
 
     This does not attach the image to any product — the client calls
     ``POST /admin/products/{id}/images`` with the returned ``image_url`` to
     link it (allowing uploads before a product exists, then linking on save).
+
+    The client is handed the resolved absolute URL so it can preview the file
+    immediately, but what it sends back to be persisted is that same value; the
+    link endpoint stores the relative path. See ``_link_path``.
     """
-    if file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Invalid file type '{file.content_type}'. "
-                f"Allowed: {', '.join(sorted(ALLOWED_IMAGE_TYPES))}"
-            ),
-        )
-
-    max_bytes = settings.s3_max_upload_size_mb * 1024 * 1024
-    contents = await file.read()
-    if len(contents) > max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=(
-                f"File too large ({len(contents) / 1024 / 1024:.1f} MB). "
-                f"Maximum allowed: {settings.s3_max_upload_size_mb} MB."
-            ),
-        )
-
-    import io
-
-    try:
-        url = StorageService.upload_fileobj(
-            fileobj=io.BytesIO(contents),
-            filename=file.filename or "product.jpg",
-            folder="products",
-            content_type=file.content_type,
-        )
-    except RuntimeError as exc:
-        logger.error(f"Product image upload failed: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to upload image to storage. Please try again.",
-        )
-
+    path = await _upload_image(file, folder="products")
     return {
         "success": True,
-        "data": {"image_url": url, "filename": file.filename},
+        "data": {"image_url": media_url(path), "filename": file.filename},
         "message": "Image uploaded successfully",
     }
 
@@ -612,13 +597,16 @@ async def add_product_image(
             detail="Product not found",
         )
 
+    # The client sends back the absolute URL it was given; persist the path only.
+    data.image_url = media_path(data.image_url) or data.image_url
+
     try:
         image = await ProductService.add_image(db, product.product_id, data)
         return {
             "success": True,
             "data": {
                 "image_id": str(image.image_id),
-                "image_url": image.image_url,
+                "image_url": media_url(image.image_url),
                 "alt_text": image.alt_text,
                 "is_primary": image.is_primary,
                 "sort_order": image.sort_order,

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
 from app.core.dependencies import get_current_admin
+from app.core.media import media_url
 from app.schemas.category import (
     CategoryCreate,
     CategoryUpdate,
@@ -58,7 +59,7 @@ async def get_categories(
                     "name": cat["name"],
                     "slug": cat["slug"],
                     "description": cat.get("description"),
-                    "image_url": cat.get("image_url"),
+                    "image_url": media_url(cat.get("image_url")),
                     "parent_category_id": str(cat["parent_category_id"]) if cat.get("parent_category_id") else None,
                     "is_active": cat["is_active"],
                     "product_count": cat.get("product_count", 0),
@@ -104,7 +105,7 @@ async def get_category(
             "name": category.name,
             "slug": category.slug,
             "description": category.description,
-            "image_url": category.image_url,
+            "image_url": media_url(category.image_url),
             "parent_category_id": str(category.parent_category_id) if category.parent_category_id else None,
             "is_active": category.is_active,
         }
@@ -144,7 +145,7 @@ async def create_category(
                 "name": category.name,
                 "slug": category.slug,
                 "description": category.description,
-                "image_url": category.image_url,
+                "image_url": media_url(category.image_url),
                 "parent_category_id": str(category.parent_category_id) if category.parent_category_id else None,
                 "is_active": category.is_active,
             },
@@ -197,7 +198,7 @@ async def update_category(
                 "name": updated_category.name,
                 "slug": updated_category.slug,
                 "description": updated_category.description,
-                "image_url": updated_category.image_url,
+                "image_url": media_url(updated_category.image_url),
                 "parent_category_id": str(updated_category.parent_category_id) if updated_category.parent_category_id else None,
                 "is_active": updated_category.is_active,
             },

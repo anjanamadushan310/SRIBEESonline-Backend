@@ -33,6 +33,7 @@ from app.schemas.product import (
     ProductVariantCreate,
 )
 from app.services.category_service import CategoryService
+from app.services.storage import get_storage
 
 
 class ProductService:
@@ -362,15 +363,33 @@ class ProductService:
 
     @staticmethod
     async def remove_image(db: AsyncSession, image_id: UUID) -> None:
-        """Remove a product image."""
+        """
+        Remove a product image — both the row and the stored file.
+
+        The file is deleted through the StorageProvider, so this works the same
+        on disk today and in a bucket later. Deleting only the row would leak
+        the file forever; on the local backend that is an EC2 volume filling up
+        with images nothing references.
+        """
         result = await db.execute(
             select(ProductImage).where(ProductImage.image_id == image_id)
         )
         image = result.scalar_one_or_none()
 
-        if image:
-            await db.delete(image)
-            await db.commit()
+        if not image:
+            return
+
+        stored_path = image.image_url
+        await db.delete(image)
+        await db.commit()
+
+        # After the commit: an orphaned file is a wasted byte, but a deleted file
+        # whose row survived a rollback is a broken image on the storefront.
+        if stored_path:
+            try:
+                get_storage().delete(stored_path)
+            except Exception as exc:  # never fail the request over cleanup
+                logger.warning(f"Could not delete media for image {image_id}: {exc}")
 
     @staticmethod
     async def set_primary_image(
