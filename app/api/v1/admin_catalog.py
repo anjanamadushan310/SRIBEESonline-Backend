@@ -54,6 +54,51 @@ ALLOWED_IMAGE_TYPES = {
 }
 
 
+async def _validate_parent(
+    db: AsyncSession,
+    parent_id: Optional[UUID],
+    self_id: Optional[UUID] = None,
+) -> None:
+    """
+    Guard the two-level Category → Sub-category hierarchy.
+
+    Products carry exactly one ``category_id`` and one ``subcategory_id``, so
+    the tree is deliberately capped at two levels: a sub-category's parent must
+    be a *root* category. Allowing deeper nesting would create categories that
+    no product could ever reference.
+    """
+    if parent_id is None:
+        return
+
+    if self_id is not None and parent_id == self_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A category cannot be its own parent.",
+        )
+
+    parent = await CategoryService.get_by_id(db, parent_id)
+    if parent is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Parent category not found.",
+        )
+
+    if parent.parent_category_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Categories are only two levels deep — a sub-category cannot "
+                   "be nested under another sub-category.",
+        )
+
+    # Demoting a parent that already has children would orphan them a level down.
+    if self_id is not None and await CategoryService.has_children(db, self_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This category has sub-categories, so it cannot itself become "
+                   "a sub-category.",
+        )
+
+
 def _format_category(cat) -> dict:
     """Serialize a Category ORM row (or the dict from CategoryService.get_all)."""
     if isinstance(cat, dict):
@@ -108,6 +153,8 @@ async def create_category(
             detail="Category with this slug already exists",
         )
 
+    await _validate_parent(db, data.parent_category_id)
+
     try:
         category = await CategoryService.create(db, data)
         logger.info(f"[admin] Category created: {category.category_id} - {category.name}")
@@ -146,6 +193,9 @@ async def update_category(
                 detail="Category with this slug already exists",
             )
 
+    if "parent_category_id" in data.model_dump(exclude_unset=True):
+        await _validate_parent(db, data.parent_category_id, self_id=category.category_id)
+
     try:
         updated = await CategoryService.update(db, category, data)
         logger.info(f"[admin] Category updated: {updated.category_id}")
@@ -173,6 +223,13 @@ async def delete_category(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Category not found",
+        )
+
+    if await CategoryService.has_children(db, category.category_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete a category that still has sub-categories. "
+                   "Delete or move them first.",
         )
 
     if await CategoryService.has_products(db, category.category_id):
@@ -203,6 +260,7 @@ async def list_products(
     limit: int = Query(20, ge=1, le=100),
     search: Optional[str] = None,
     category_id: Optional[str] = None,
+    subcategory_id: Optional[str] = None,
     is_active: Optional[bool] = Query(None, description="Filter by status; omit for all"),
     sort_by: str = Query("created_at", pattern="^(created_at|price|name|view_count)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
@@ -213,6 +271,9 @@ async def list_products(
 
     Returns products in **all** branches/states (active and inactive); this is
     the admin view, not the branch-scoped customer listing.
+
+    Filtering by ``category_id`` includes products filed under any of that
+    category's sub-categories; ``subcategory_id`` narrows to one leaf.
     """
     cat_uuid = None
     if category_id:
@@ -224,12 +285,23 @@ async def list_products(
                 detail="Invalid category ID",
             )
 
+    subcat_uuid = None
+    if subcategory_id:
+        try:
+            subcat_uuid = UUID(subcategory_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid sub-category ID",
+            )
+
     offset = (page - 1) * limit
     products, total = await ProductService.get_all(
         db,
         limit=limit,
         offset=offset,
         category_id=cat_uuid,
+        subcategory_id=subcat_uuid,
         search=search,
         sort_by=sort_by,
         sort_order=sort_order,
@@ -280,6 +352,11 @@ async def create_product(
         )
 
     try:
+        await CategoryService.validate_subcategory(db, data.category_id, data.subcategory_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    try:
         product = await ProductService.create(db, data)
         # Re-fetch with relationships loaded so format_product is safe.
         product = await ProductService.get_by_id(db, product.product_id, include_inactive=True)
@@ -318,6 +395,17 @@ async def update_product(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Product with this slug already exists",
             )
+
+    # Validate the pair the product will *end up* with: a partial update may
+    # move the category without resending subcategory_id (or vice versa), and
+    # the stale half still has to satisfy the parent-child contract.
+    fields = data.model_dump(exclude_unset=True)
+    next_category = fields.get("category_id", product.category_id)
+    next_subcategory = fields.get("subcategory_id", product.subcategory_id)
+    try:
+        await CategoryService.validate_subcategory(db, next_category, next_subcategory)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     try:
         updated = await ProductService.update(db, product, data)

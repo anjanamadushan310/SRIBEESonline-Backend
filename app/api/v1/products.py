@@ -27,6 +27,7 @@ from app.schemas.product import (
     ProductVariantCreate,
 )
 from app.services import branch_service
+from app.services.category_service import CategoryService
 from app.services.product_review_service import ProductReviewService
 from app.services.product_service import ProductService
 
@@ -80,7 +81,11 @@ def format_product(
         "updated_at": product.updated_at.isoformat() if product.updated_at else None,
     }
 
-    # Category
+    # Category. The flat ids sit alongside the nested objects so clients can
+    # filter/group without having to reach into the nested shape.
+    data["category_id"] = str(product.category_id) if product.category_id else None
+    data["subcategory_id"] = str(product.subcategory_id) if product.subcategory_id else None
+
     if product.category:
         data["category"] = {
             "category_id": str(product.category.category_id),
@@ -90,6 +95,18 @@ def format_product(
         }
     else:
         data["category"] = None
+
+    # Sub-category (a Category row whose parent_category_id == category_id)
+    subcategory = getattr(product, "subcategory", None)
+    if subcategory:
+        data["subcategory"] = {
+            "category_id": str(subcategory.category_id),
+            "name": subcategory.name,
+            "slug": subcategory.slug,
+            "image_url": subcategory.image_url,
+        }
+    else:
+        data["subcategory"] = None
 
     # Images
     data["images"] = [
@@ -155,6 +172,7 @@ async def get_products(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     category_id: Optional[str] = None,
+    subcategory_id: Optional[str] = None,
     is_featured: Optional[bool] = None,
     search: Optional[str] = None,
     min_price: Optional[float] = None,
@@ -170,6 +188,9 @@ async def get_products(
 
     Only products that exist in ``branch_inventory`` for the user's branch
     with ``is_active=True`` and ``stock_quantity > 0`` are returned.
+
+    ``category_id`` matches the category and every sub-category under it;
+    ``subcategory_id`` narrows to a single leaf.
     """
     try:
         context = await _get_branch_context(redis, current_user.user_id)
@@ -183,12 +204,20 @@ async def get_products(
             except ValueError:
                 pass
 
+        subcat_uuid = None
+        if subcategory_id:
+            try:
+                subcat_uuid = UUID(subcategory_id)
+            except ValueError:
+                pass
+
         items, total = await ProductService.get_all_for_branch(
             db,
             branch_id=branch_id,
             limit=limit,
             offset=offset,
             category_id=cat_uuid,
+            subcategory_id=subcat_uuid,
             is_featured=is_featured,
             search=search,
             min_price=Decimal(str(min_price)) if min_price else None,
@@ -545,6 +574,11 @@ async def create_product(
         )
 
     try:
+        await CategoryService.validate_subcategory(db, data.category_id, data.subcategory_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    try:
         product = await ProductService.create(db, data)
         logger.info(f"Product created: {product.product_id} - {product.name}")
 
@@ -587,6 +621,18 @@ async def update_product(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Product with this slug already exists"
             )
+
+    # Validate the category/sub-category pair the product ends up with, since a
+    # partial update may move only one half of it.
+    fields = data.model_dump(exclude_unset=True)
+    try:
+        await CategoryService.validate_subcategory(
+            db,
+            fields.get("category_id", product.category_id),
+            fields.get("subcategory_id", product.subcategory_id),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     try:
         updated_product = await ProductService.update(db, product, data)

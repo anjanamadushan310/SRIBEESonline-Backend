@@ -177,14 +177,82 @@ jobs:
               exit 1
             fi
 
-            # Start the app first: on boot it runs SQLAlchemy create_all(), which
-            # creates any MISSING TABLES. The raw SQL migrations below then ALTER
-            # those tables to add new COLUMNS/constraints, so the tables must
-            # already exist before migrations run.
-            echo "Starting application (creates base tables on first boot)..."
-            sudo docker compose up -d fastapi_backend
+            echo "==== 7a. EXTRACT MIGRATIONS FROM THE IMAGE ===="
+            # The .sql files ship inside the backend image at /app/migrations.
+            # Copy them out of a NON-RUNNING container created from the image, so
+            # they are on disk before the app ever serves a request. (The old
+            # `docker compose cp` required the app container to already be up,
+            # which is exactly what we must avoid.)
+            rm -rf ./migrations
+            sudo docker rm -f sribees_mig_tmp >/dev/null 2>&1 || true
+            sudo docker create --name sribees_mig_tmp "${DOCKER_IMAGE}:latest" >/dev/null
+            sudo docker cp sribees_mig_tmp:/app/migrations ./migrations || echo "No /app/migrations in image."
+            sudo docker rm -f sribees_mig_tmp >/dev/null 2>&1 || true
+            sudo chown -R "$USER":"$USER" ./migrations 2>/dev/null || true
 
-            echo "Waiting for the application to report healthy..."
+            # Apply every .sql in filename order. Files are idempotent
+            # (IF NOT EXISTS), so re-running them each deploy is safe.
+            # ON_ERROR_STOP=1 makes psql exit non-zero on a genuine SQL error or
+            # an unreachable DB (aborting the deploy), while harmless NOTICEs
+            # from IF NOT EXISTS clauses do NOT stop execution.
+            apply_migrations() {
+              if ! ls ./migrations/*.sql >/dev/null 2>&1; then
+                echo "No .sql migration files found in the image — skipping."
+                return 0
+              fi
+              for f in $(ls -1 ./migrations/*.sql | sort); do
+                echo ">>> Applying migration: $(basename "$f")"
+                if cat "$f" | sudo docker compose exec -T postgres_db \
+                     psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME"; then
+                  echo "    OK: $(basename "$f")"
+                else
+                  echo "    FAILED: $(basename "$f") — aborting deploy."
+                  exit 1
+                fi
+              done
+              echo "All SQL migrations applied successfully."
+            }
+
+            echo "==== 7b. MIGRATE BEFORE SERVING TRAFFIC ===="
+            # Ordering is a correctness requirement, not a preference.
+            #
+            # SQLAlchemy's create_all() creates MISSING TABLES only — it never
+            # adds a column to a table that already exists. The previous order
+            # (start app -> wait /health -> migrate) therefore let the NEW image
+            # serve live traffic against the OLD schema: it would select
+            # products.subcategory_id before migration 019 added that column, and
+            # 500 on every catalog request until the migration landed.
+            #
+            # So on an existing database: migrate FIRST, then start the app.
+            #
+            # A brand-new database must invert this — there are no tables for the
+            # ALTERs to target, so the app boots once to create them. create_all()
+            # builds them complete (the models already declare the new columns),
+            # which makes the migrations harmless no-ops afterwards.
+            SCHEMA_EXISTS=$(sudo docker compose exec -T postgres_db \
+              psql -tAc "SELECT to_regclass('public.products') IS NOT NULL" \
+              -U "$DB_USER" -d "$DB_NAME" 2>/dev/null | tr -d '[:space:]' || echo "f")
+
+            if [ "$SCHEMA_EXISTS" = "t" ]; then
+              echo "Existing database detected — applying migrations BEFORE starting the app."
+              apply_migrations
+              echo "Schema is up to date. Starting application..."
+              sudo docker compose up -d fastapi_backend
+            else
+              echo "Fresh database detected — booting app once so create_all() builds base tables."
+              sudo docker compose up -d fastapi_backend
+              for i in $(seq 1 40); do
+                if curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1; then
+                  echo "Application is healthy; base tables created."
+                  break
+                fi
+                echo "  ...waiting for app ($i/40)"
+                sleep 3
+              done
+              apply_migrations
+            fi
+
+            echo "==== 7c. VERIFY APP HEALTH ===="
             APP_READY=0
             for i in $(seq 1 40); do
               if curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1; then
@@ -196,36 +264,9 @@ jobs:
               sleep 3
             done
             if [ "$APP_READY" -ne 1 ]; then
-              echo "WARNING: app did not report healthy in time; running migrations anyway."
-              sudo docker compose logs --tail 50 fastapi_backend || true
-            fi
-
-            echo "==== 7b. RUN SQL MIGRATIONS (idempotent, in filename order) ===="
-            # The migration .sql files ship inside the backend image at
-            # /app/migrations. Copy them out of the running container so we can
-            # feed each into psql. Files use IF NOT EXISTS, so re-running every
-            # deploy is safe.
-            rm -rf ./migrations
-            sudo docker compose cp fastapi_backend:/app/migrations ./migrations
-            sudo chown -R "$USER":"$USER" ./migrations 2>/dev/null || true
-
-            if ls ./migrations/*.sql >/dev/null 2>&1; then
-              for f in $(ls -1 ./migrations/*.sql | sort); do
-                echo ">>> Applying migration: $(basename "$f")"
-                # ON_ERROR_STOP=1 makes psql exit non-zero on a genuine SQL error
-                # or an unreachable DB (which aborts the deploy), while harmless
-                # NOTICEs from IF NOT EXISTS clauses do NOT stop execution.
-                if cat "$f" | sudo docker compose exec -T postgres_db \
-                     psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME"; then
-                  echo "    OK: $(basename "$f")"
-                else
-                  echo "    FAILED: $(basename "$f") — aborting deploy."
-                  exit 1
-                fi
-              done
-              echo "All SQL migrations applied successfully."
-            else
-              echo "No .sql migration files found in the image — skipping migrations."
+              echo "ERROR: application did not report healthy — failing the deploy."
+              sudo docker compose logs --tail 80 fastapi_backend || true
+              exit 1
             fi
 
             echo "==== 8. NGINX REVERSE PROXY & SSL ===="
